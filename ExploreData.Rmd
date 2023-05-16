@@ -1,0 +1,494 @@
+---
+title: "Intake-Weight relationship for salmon"
+author: "Shane A. Richards"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    code_folding: show
+    highlight: tango
+    theme: cerulean
+    toc: yes
+    toc_float: no
+  word_document:
+    toc: yes
+  pdf_document:
+    toc: yes
+---
+
+----
+
+# Summary
+
+In this document we explore and fit a model (using Bayesian methods) that describes the weight-dependent intake rate relationship for salmon. The model includes competitive effects and intrinsic fish variation.
+
+This model will later be incorporated into a subsequent model that tries to predict fish growth.
+
+----
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse) # data frame functionality
+library(cowplot)   # create multi-plots
+library(rstan)
+library(bayesplot)
+library(ggridges)
+
+rm(list = ls()) # clear memory
+
+# read in data and wrangle
+
+# group feed consumption data
+df_group <- read_csv("100S_feed_provided.csv") %>%
+  mutate(feed_provided_g = feed_provided_kg*1000)
+
+df_group$tank   <- factor(df_group$tank)
+
+# individual feed consumption data
+df_indiv <- read_csv("100S_fish_growth.csv")  %>%
+  select(c(2,3,4,5,7))
+
+# set up individual data frame
+df_indiv$ID   <- factor(df_indiv$ID)
+df_indiv$tank <- factor(df_indiv$tank)
+df_indiv$days[which(df_indiv$days == 276)] <- 274
+
+# add appropriate mean weights
+df_indiv <- df_indiv %>%
+	left_join(select(df_group, tank, days, w_bar), by = c("days", "tank"))
+
+# only keep data where intake is known and non-zero
+df_indiv <- df_indiv %>%
+	filter(!is.na(intake), intake > 0)
+```
+
+```{r}
+p1 <- ggplot(df_indiv) +
+	geom_point(aes(x = w, y = intake, color = tank)) +
+	labs(x = "Weight (g)", y = "Intake (g/ind.)") +
+	theme_bw()
+
+p2 <- ggplot(df_indiv) +
+	geom_point(aes(x = w, y = intake, color = tank)) +
+	labs(x = "Weight (g)", y = "Intake (g/ind.)") +
+	facet_wrap( ~ tank) + 
+	theme_bw()
+
+plot_grid(p1, p2, ncol = 1)
+```
+
+```{r}
+p1 <- ggplot(df_indiv) +
+	geom_point(aes(x = w, y = intake, color = tank)) +
+	labs(x = "Weight (g)", y = "Intake (g/ind.)") +
+	scale_x_log10() + scale_y_log10() +
+	theme_bw()
+
+p2 <- ggplot(df_indiv) +
+	geom_point(aes(x = w, y = intake, color = tank), alpha = 0.1) +
+	labs(x = "Weight (g)", y = "Intake (g/ind.)") +
+	facet_wrap( ~ tank) + 
+	scale_x_log10() + scale_y_log10() +
+	theme_bw()
+
+plot_grid(p1, p2, ncol = 1)
+```
+
+```{r}
+ggplot(df_indiv) +
+	geom_point(aes(x = w, y = intake, color = (w - w_bar)/w_bar)) +
+	labs(x = "Weight (g)", y = "Intake (g/ind.)", 
+	color = "Relative\nweight") +
+	scale_x_log10() + scale_y_log10() +
+	scale_color_gradient2(low = "red", mid = "white", high = "blue", midpoint = 0) +
+	theme_bw() +
+	theme(
+    panel.background = element_rect(fill = "grey10"),
+    panel.grid = element_line(colour = "grey35") 
+  )
+```
+
+```{r}
+df_indiv <- df_indiv %>%
+	mutate(ln_w = log(w))
+df_indiv$ln_w_bin <- cut(df_indiv$ln_w, breaks = 8)
+
+df_summary <- df_indiv %>%
+  group_by(ln_w_bin, tank) %>%
+	summarise(.groups = "drop",
+		n = n(), 
+		median_w = median(w),
+		intake_mean = mean(intake),
+		intake_var  = var(intake),
+		intake_100 = quantile(intake, probs = 0.1),
+		intake_900 = quantile(intake, probs = 0.9),
+		cov = sd(intake)/intake_mean) %>%
+	filter(n >= 3)
+```
+
+```{r}
+ggplot(df_summary) +
+	geom_ribbon(aes(x = median_w, ymin = intake_100, ymax = intake_900, 
+    fill = tank)) +
+	geom_point(aes(x = median_w, y = intake_mean)) +
+	labs(x = "Mean weight (g)", y = "Mean intake (g/ind.)") +
+	facet_wrap( ~ tank) +
+	scale_x_log10() + scale_y_log10() +
+	theme_bw()
+```
+
+```{r}
+p1 <- ggplot(df_summary) +
+	geom_point(aes(x = median_w, y = cov, color = tank)) +
+	labs(x = "Weight (g)", y = "Coefficient of variation") +
+	theme_bw()
+	
+p2 <- ggplot(df_summary) +
+	geom_point(aes(x = intake_mean, y = cov, color = tank)) +
+	labs(x = "Mean intake (g/ind.)", y = "Coefficient of variation") +
+	theme_bw()
+
+plot_grid(p1,p2)
+```
+
+```{r}
+ggplot(df_indiv) +
+	geom_histogram(aes(x = intake), 
+		binwidth = 2, fill = "lightblue", color = "blue") +
+	facet_grid(tank ~ ln_w_bin) +
+	labs(x = "Mean intake (g/ind.)") +
+	theme_bw()
+
+ggplot(df_indiv, aes(intake, ln_w_bin)) +
+  facet_grid(.~tank) +
+  geom_density_ridges() +
+  theme_bw()
+```
+
+```{r}
+df_growth <- df_indiv %>%
+	select(ID, tank, days, w, w_bar) %>%
+	na.omit() %>% 
+	mutate(weight_ratio = w / w_bar) %>%
+	arrange(tank, ID, days)
+
+df_growth$dt         <- NA
+df_growth$delta_w_dt <- NA
+df_growth$delta_w_1  <- NA
+
+current_id <- df_growth$ID[1]
+for (j in 2:nrow(df_growth)) {
+  if (df_growth$ID[j] == current_id) { # prior data is present
+  	df_growth$dt[j-1]         <- df_growth$days[j] - df_growth$days[j-1]
+  	df_growth$delta_w_dt[j-1] <- df_growth$w[j] - df_growth$w[j-1]    # growth over time interval between measurements
+  	df_growth$delta_w_1[j-1]  <- df_growth$delta_w_dt[j-1] / df_growth$dt[j-1]  # theoretical daily growth increment
+  }
+  current_id <- df_growth$ID[j]	
+}
+```
+
+```{r}
+df_plot <- df_growth %>%
+	select(tank, ID, days, w, weight_ratio, delta_w_1) %>%
+	arrange(tank, ID, days) %>%
+	na.omit()
+
+ggplot(df_plot) +
+	geom_hline(yintercept = 0, color = "white") +
+	geom_point(aes(x = w, y = delta_w_1, color = weight_ratio)) +
+	scale_colour_gradient2(
+    low = "red",
+    mid = "grey85",
+    high = "blue",
+    midpoint = 1
+  ) +
+  facet_wrap( ~ tank) +
+	scale_x_log10() +
+	labs(x = "Weight (g)", y = "Estimated daily changein weigfht (g)") +
+	theme_bw() +
+  theme(
+    panel.background = element_rect(fill = "grey10"),
+    panel.grid = element_line(colour = "grey35") 
+  )
+```
+
+```{r}
+df_intake_group <- df_group %>%
+  mutate(intake_ind = feed_consumed_g / fish_no, fish_no_F = factor(fish_no))
+
+df_intake_indiv <- df_indiv %>%
+	select(ID, tank, days, w, intake) %>%
+	na.omit() %>%
+	filter(intake > 0)
+
+ggplot() +
+	geom_point(data = df_intake_indiv,
+   aes(x = w, y = intake), color = "blue", alpha = 1) +
+	geom_point(data = df_intake_group,
+    aes(x = w_bar, y = intake_ind), color = "red", alpha = 1) +
+  labs(
+  	x = "Weight (g)", y = "Intake (g/ind.)", subtitle = "Red = group, blue = individual") +
+	scale_x_log10() +
+	scale_y_log10() +
+	facet_wrap( ~ tank) +
+	theme_bw()
+```
+
+# Bayesian Fit
+
+Relationships:
+* a power-law relationship between mass and intake
+* a power-law relationship between mass and the coefficient of variation of intake  
+Variation:
+* gamma distribution of variation in observed intake from the predicted mean
+* between-individuals
+    * variation in expected intake among fish is described by a log-normal
+* between-samples
+    * variation in expected intake among samples is described by a log-normal
+    
+```{r}
+# prepare the data (stan wants a list of data not a data frame)
+df_fit <- df_indiv %>%
+  select(ID, tank, days, w, w_bar, intake) %>%
+  filter(intake > 0) %>%
+  na.omit() %>%
+  mutate(
+    w_rel  = (w - w_bar)/w_bar,
+    j      = as.integer(factor(ID)),
+    sample = factor(paste(tank, "_", days, sep = "")),
+    k      = as.integer(sample))
+
+I <- nrow(df_fit)  # number of observations
+J <- max(df_fit$j) # number of fish
+K <- max(df_fit$k) # number of fish
+
+w_std <- 600.0 # standard weight (a1 = intake, cov = a2)
+
+stan_dat <- list(
+  I      = I, # number of observations
+  J      = J, # number of fish
+  K      = K, # number of samples
+  w_std  = 600.0, # standardised fish weight (should be a typical weight)  
+  j      = df_fit$j,      # fish 
+  k      = df_fit$k,      # sample
+  w      = df_fit$w,      # weight
+  w_rel  = df_fit$w_rel,  # relative weight
+  Intake = df_fit$intake) # intake
+```
+
+```{r}
+# fit the model!
+fit_n <- stan(file = 'IntakeFit.stan', data = stan_dat,
+  iter = 500, warmup = 250, chains = 4, refresh = 50, seed = 42)
+```
+
+```{r}
+# check out some predicted model parameters and log-likelihood
+model_par <- c("a1", "b1", "c1", "a2", "b2", "sigma_j", "sigma_k")
+
+# check for chain convergence
+rstan::traceplot(object = fit_n, pars = model_par, inc_warmup = TRUE, 
+  ncol = 3)
+```
+
+```{r message=FALSE}
+mcmc_hist(fit_n, pars = model_par) # show histograms of posterior parameter estimates
+```
+
+```{r}
+l_par <- rstan::extract(fit_n, pars = c("a1", "b1", "c1", "a2", "b2")) 
+
+df_predict <- tibble(
+  w = seq(from = min(df_fit$w), to = max(df_fit$w), length.out = 100)
+) %>%
+  mutate(I_025 = 0.0, I_500 = 0.0, I_975 = 0.0, cv_025 = 0.0, cv_500 = 0.0, cv_975 = 0.0)
+
+for (i in 1:nrow(df_predict)) {
+  df_predict$I_025[i] <- quantile(
+    l_par$a1*(df_predict$w[i]/w_std)^l_par$b1, probs = 0.025)
+  df_predict$I_500[i] <- quantile(
+    l_par$a1*(df_predict$w[i]/w_std)^l_par$b1, probs = 0.500)
+  df_predict$I_975[i] <- quantile(
+    l_par$a1*(df_predict$w[i]/w_std)^l_par$b1, probs = 0.975)
+  
+  df_predict$cv_025[i] <- quantile(
+    l_par$a2*exp(l_par$b2*(df_predict$w[i]-w_std)), probs = 0.025)
+  df_predict$cv_500[i] <- quantile(
+    l_par$a2*exp(l_par$b2*(df_predict$w[i]-w_std)), probs = 0.500)
+  df_predict$cv_975[i] <- quantile(
+    l_par$a2*exp(l_par$b2*(df_predict$w[i]-w_std)), probs = 0.975)
+}
+```
+
+```{r}
+p1 <- ggplot() +
+  geom_point(data = df_fit,
+    aes(x = w, y = intake), alpha = 0.2, color = "salmon") +
+	geom_ribbon(data = df_predict,
+    aes(x = w, ymin = I_025, ymax = I_975), fill = "salmon") +
+	geom_line(data = df_predict,
+    aes(x = w, y = I_500), color = "darkred") +
+	labs(x = "Weight (g)", y = "Intake (g/ind.)") +
+	theme_bw()
+
+p2 <- ggplot() +
+	geom_ribbon(data = df_predict,
+    aes(x = w, ymin = cv_025, ymax = cv_975), fill = "salmon") +
+	geom_line(data = df_predict,
+    aes(x = w, y = cv_500), color = "darkred") +
+ geom_point(data = df_summary,
+   aes(x = median_w, y = cov)) +
+	labs(x = "Weight (g)", y = "Coefficient of variation") +
+	theme_bw()
+
+plot_grid(p1, p2)
+```
+
+* Above data (salmon circles) are the data used when fitting
+
+```{r}
+ggplot() +
+	geom_point(data = df_fit,
+    aes(x = w, y = intake, color = w_rel), alpha = 0.5) +
+	geom_ribbon(data = df_predict,
+    aes(x = w, ymin = I_025, ymax = I_975), fill = "salmon") +
+	geom_line(data = df_predict,
+    aes(x = w, y = I_500), color = "darkred") +
+	labs(x = "Weight (g)", y = "Intake (g/ind.)", 
+    color = "Relative\nweight") +
+	scale_color_gradient2(low = "red", mid = "white", high = "blue", 
+    midpoint = 0) +
+	theme_bw() +
+	theme(
+    panel.background = element_rect(fill = "grey10"),
+    panel.grid = element_line(colour = "grey35") 
+  )
+```
+
+* The prediction is for a typical fish (individual random effect is zero) when it is of average weight in their tank (`w_rel = 0`).
+    * line should coincide most with the white circles
+* The figure suggests a poor fit for the larger fish, but these fish are associated with `w_re > 0` (are relatively larger than their tank average), and the model estimates them to have relatively higher intake (so they should show a positive bias)
+* we can better assess model fit by comparing model predictions (taking into account their relative size as well) with the observed intake
+
+```{r}
+df_fit$intake_model <- 0.0
+
+for (i in 1:I) {
+  df_fit$intake_model[i] <- median(
+    l_par$a1*exp(l_par$c1*df_fit$w_rel[i])*(((df_fit$w[i]/w_std)^l_par$b1))
+  )
+}
+```
+
+```{r}
+ggplot(df_fit) +
+	geom_point(aes(x = intake_model, y = intake, color = w_rel)) +
+	scale_color_gradient2(low = "red", mid = "white", high = "blue", 
+    midpoint = 0) +
+	geom_abline(slope = 1, intercept = 0, linetype = "solid",
+    color = "gold") + 
+	labs(
+    x = "Predicted intake (g/ind.)", 
+    y = "Observed intake (g/ind.)", 
+    color = "Relative\nweight") +
+	facet_wrap( ~ factor(days)) +
+	theme_bw() +
+	theme(
+    panel.background = element_rect(fill = "grey10"),
+    panel.grid = element_line(colour = "grey35") 
+  )
+```
+
+* The model adequately fits the intake data for the relatively large and the relatively small fish, for each time period.
+
+```{r}
+df_predict <- tibble(
+  w_rel = seq(from = min(df_fit$w_rel), to = max(df_fit$w_rel), 
+    length.out = 100),
+	I_rel_025 = 0.0, I_rel_500 = 0.0, I_rel_975 = 0.0)
+  	
+for (i in 1:nrow(df_predict)) {
+  df_predict$I_rel_025[i] <- quantile(
+    exp(l_par$c1*df_predict$w_rel[i]), probs = 0.025)
+  df_predict$I_rel_500[i] <- quantile(
+    exp(l_par$c1*df_predict$w_rel[i]), probs = 0.500)
+  df_predict$I_rel_975[i] <- quantile(
+    exp(l_par$c1*df_predict$w_rel[i]), probs = 0.975)
+}
+
+p1 <- ggplot(df_predict) +
+	geom_ribbon(aes(x = w_rel, ymin = I_rel_025, ymax = I_rel_975), 
+    fill = "salmon") + 
+	geom_line(aes(x = w_rel, y = I_rel_500)) + 
+	xlim(-1,1) + # ylim(0,NA) + 
+	labs(x = "Relative weight", y = "Relative intake") +
+	theme_bw()
+
+p2 <- ggplot(df_fit) +
+	geom_histogram(aes(x = w_rel), fill = "salmon", color = "darkred") + 
+	labs(x = "Relative weight", y = "Frequency") +
+	xlim(-1,1) +
+	theme_bw()
+
+plot_grid(p1, p2, ncol = 1)
+```
+
+```{r}
+l_par <- rstan::extract(fit_n, pars = c("sigma_j", "RE_j"))
+
+df_j <- tibble(j = 1:J)
+df_j$delta <-	apply(l_par$RE_j, MARGIN = 2, FUN = median)
+df_j <- df_j %>% left_join(select(df_fit, j, w_rel, intake_model), by = "j")
+
+ggplot(df_j) +
+	geom_vline(xintercept = 0, linetype = "dashed") +
+	geom_hline(yintercept = 0, linetype = "dashed") +
+	geom_point(aes(x = delta, y = w_rel)) +
+	labs(x = "Individual-level deviation", y = "Relative weight") +
+	theme_bw() +
+	theme(panel.grid = element_blank())
+```
+
+* the individual-level deviations in intake are independent of the fish's relative size, even after accounting for competitive effects
+    * do these deviations correlate with fish growth?
+    * can a fish be relatively good at getting food and using such food efficiently for growth, or is there a trade-off?
+    
+
+# daily change in biomass (g) vs daily provided feed (g)
+```{r}
+current_tank <- df_group$tank[1]
+df_group$growth_g <- NA
+
+for (j in 1:nrow(df_group)) {
+  if(df_group$tank[j] == current_tank){
+  	df_group$growth_g[j] <- df_group$biomass_g[j+1] - df_group$biomass_g[j]
+  }
+  current_tank <- df_group$tank[j]
+}
+```
+
+
+```{r}
+ggplot(df_group, aes(days, growth_g, color = tank)) +
+  geom_point() +
+  facet_grid(.~tank) +
+  theme_bw()
+```
+
+```{r}
+current_tank <- df_group$tank[1]
+df_group$av_growth_g <- NA
+
+for (j in 2:nrow(df_group)) {
+  if(df_group$tank[j] == current_tank){
+  	df_group$av_growth_g[j] <- df_group$w_bar[j] - df_group$w_bar[j-1]
+  }
+  current_tank <- df_group$tank[j]
+}
+```
+
+```{r}
+ggplot(df_group, aes(x = av_growth_g, y = feed_provided_g/fish_no, color = tank)) +
+  geom_point() +
+  facet_grid(.~tank) +
+  theme_bw()
+```
+
