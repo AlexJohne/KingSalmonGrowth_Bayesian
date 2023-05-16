@@ -1,6 +1,13 @@
 # Ch1_Bayesian
-Methods (data collection)
 
+# data files
+100S_feed_provided.csv --> contains amount of feed consumed daily at the tank level from around day 91, estimated tank biomass, number of fish, and 
+estimated average tank weight for the 100 % satiation ration treatment (100S)
+
+100_fish_growth.csv --> contains individual ID, wet weight, average tank wet weight, and, where available, individual intake data (again 100S only)
+
+
+# Methods (data collection)
 A single cohort of all-female king salmon juveniles were sourced from a local hatchery (Clearwater Hatchery, Mt Cook Alpine Salmon, Twizel, New Zealand), 
 where the fish were individually implanted with a passive integrated transponder (PIT) tag (HID Global, EM4305 684,230, 12 mm glass tags). 
 The growth trial was conducted over a period of 276 days in the Finfish Research Centre (FRC) at the Cawthron Aquaculture Park (CAP), New Zealand. 
@@ -11,7 +18,7 @@ light to prevent early maturation. Water quality parameters, such as nitrogenous
 monitored daily and maintained within limits for salmonid aquaculture (Thorarensen & Farrell, 2011). 
 
 
-2.2 Feeding regimes and sampling 
+Feeding regimes and sampling 
 	
 The experiment tested the effects of three feed rations – 60%, 80%, or 100% satiation (n=3) – on growth performance. One extruded feed with pellet sizes 
 of 4 mm and 6 mm was used throughout the experiment (Tasman Freshwater experimental diet, Ridley, Australia). 
