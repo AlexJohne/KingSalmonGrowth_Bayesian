@@ -44,7 +44,7 @@ df_group$tank   <- factor(df_group$tank)
 
 # individual feed consumption data
 df_indiv <- read_csv("100S_fish_growth.csv")  %>%
-  select(c(2,3,4,5,7))
+  dplyr::select(c(2,3,4,5,7))
 
 # set up individual data frame
 df_indiv$ID   <- factor(df_indiv$ID)
@@ -53,7 +53,7 @@ df_indiv$days[which(df_indiv$days == 276)] <- 274
 
 # add appropriate mean weights
 df_indiv <- df_indiv %>%
-	left_join(select(df_group, tank, days, w_bar), by = c("days", "tank"))
+	left_join(dplyr::select(df_group, tank, days, w_bar), by = c("days", "tank"))
 
 # only keep data where intake is known and non-zero
 df_indiv <- df_indiv %>%
@@ -165,7 +165,7 @@ ggplot(df_indiv, aes(intake, ln_w_bin)) +
 
 ```{r}
 df_growth <- df_indiv %>%
-	select(ID, tank, days, w, w_bar) %>%
+	dplyr::select(ID, tank, days, w, w_bar) %>%
 	na.omit() %>% 
 	mutate(weight_ratio = w / w_bar) %>%
 	arrange(tank, ID, days)
@@ -187,7 +187,7 @@ for (j in 2:nrow(df_growth)) {
 
 ```{r}
 df_plot <- df_growth %>%
-	select(tank, ID, days, w, weight_ratio, delta_w_1) %>%
+	dplyr::select(tank, ID, days, w, weight_ratio, delta_w_1) %>%
 	arrange(tank, ID, days) %>%
 	na.omit()
 
@@ -215,7 +215,7 @@ df_intake_group <- df_group %>%
   mutate(intake_ind = feed_consumed_g / fish_no, fish_no_F = factor(fish_no))
 
 df_intake_indiv <- df_indiv %>%
-	select(ID, tank, days, w, intake) %>%
+	dplyr::select(ID, tank, days, w, intake) %>%
 	na.omit() %>%
 	filter(intake > 0)
 
@@ -247,7 +247,7 @@ Variation:
 ```{r}
 # prepare the data (stan wants a list of data not a data frame)
 df_fit <- df_indiv %>%
-  select(ID, tank, days, w, w_bar, intake) %>%
+  dplyr::select(ID, tank, days, w, w_bar, intake) %>%
   filter(intake > 0) %>%
   na.omit() %>%
   mutate(
@@ -436,7 +436,7 @@ l_par <- rstan::extract(fit_n, pars = c("sigma_j", "RE_j"))
 
 df_j <- tibble(j = 1:J)
 df_j$delta <-	apply(l_par$RE_j, MARGIN = 2, FUN = median)
-df_j <- df_j %>% left_join(select(df_fit, j, w_rel, intake_model), by = "j")
+df_j <- df_j %>% left_join(dplyr::select(df_fit, j, w_rel, intake_model), by = "j")
 
 ggplot(df_j) +
 	geom_vline(xintercept = 0, linetype = "dashed") +
