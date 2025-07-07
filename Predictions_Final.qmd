@@ -1,0 +1,1579 @@
+---
+title: "Model Predictions (final)"
+author: "Shane A. Richards"
+format:
+  html:
+    self-contained: true
+editor: 
+  navigate: false
+toc: true
+code-overflow: wrap
+---
+
+------------------------------------------------------------------------
+
+# Summary
+
+In this document we use model parameters previously calculated using Bayesian methods to predict fish intake and growth.
+
+------------------------------------------------------------------------
+
+# Model
+
+## Intake and energetic costs
+
+Here, we assume energy density is constant throughout the study, which means daily rates of change in fish weight can be expressed in terms of weight-dependent gains and losses. Let $w_{j,t}$ denote the weight of fish $j$ on day $t$, and $r_{j,t}$ be its relative weight compared with the average weight of others in the tank, $\bar{w}_{j,t}$ (i.e., $r_{j,t} = (w_{j,t} - \bar{w}_{j,t})/\bar{w}_{j,t}$). The expected intake rate of this individual on day $t$ is
+
+$$
+I_{j,t} = a_1 e^{(c_{1,0} + c_{1,1}\bar{w}_{j,t}) r_{j,t}} \bigg (\frac{w_{j,t}}{\hat{w}} \bigg )^{b_1} e^{\delta_{\text{I},j} + \kappa_{j,t}},
+$$
+
+where $\delta_{\text{I},j}$ and $\kappa_{j,t}$ are random effects drawn from distinct normal distributions with mean zero, that describe between-individual and between-sample variation in intake, respectively. The parameters $c_{1,0}$ and $c_{1,1}$ describe potential social effects by allowing the relative weight of a fish to impact its intake, either positively or negatively. These terms also allow the strength of social interactions to change as fish grow.
+
+Variation in observed intake around the expected value is assumed to be consistent with a gamma distribution with constant coefficient of variation (cv); $\text{cv}_\text{I}$. The parameters of the gamma distribution relate to the mean and the cv according to $\alpha = \text{cv}_\text{I}^{-2}$ and $\beta = \text{cv}_\text{I}/I_{j,t}$. Also, to help with fitting, we standardise weights according to the average initial weight, $\hat{w}$. Thus, $a_1$ is the expected intake of an average weight fish at the first time of sampling.
+
+We assuming the maximum daily weight gain is $\epsilon I_{j,t}$ and daily cost in weight is
+
+$$
+C_{j,t} = a_2 e^{(c_{2,0} + c_{2,1}\bar{w}_{j,t}) r_{j,t}} \bigg (\frac{w_{j,t}}{\hat{w}} \bigg )^{b_2} e^{\delta_{\text{C},j}}.
+$$
+
+The parameters $c_{2,0}$ and $c_{2,1}$ allow investigation of social interactions on cost based on relative weights.
+
+The parameter $\delta_{\text{C},j}$ describes between-individual variation in cost. Thus, each individual is associated with two random effect terms: $\delta_{\text{I},j}$ and $\delta_{\text{C},j}$. We assume these two terms may be correlated and come from a bivariate normal distribution with standard deviations: $\sigma_\text{I}$ and $\sigma_\text{C}$, and correlation $\rho$. Here, we are interested in whether individuals tend to exhibit a trade-off between high intake and low cost.
+
+The expected daily change in weight is: $$
+w_{j,t+1} = w_{j,t} + \varepsilon I_{j,t}(w_{j,t},r_{j,t}) - C_{j,t}(w_{j,t}).
+$$
+
+Similar to intake, variation in observed weights about this expectation is consistent with a gamma distribution, but with constant coefficient of variation, $\text{cv}_\text{W}$.
+
+Weights are provided at four times: $t = \{T_0, T_1, T_2, T_3 \}$. However, in order to implement the growth model, we require daily estimates of relative size, and mean size. These daily values can be predicted from the observed values using linear regression. For the daily relative weights we use:
+
+$$
+r_{j,t} = r_{j,T_i} + \frac{t - T_i}{T_{i+1} - T_i} \left ( r_{j,T_{i+1}} - r_{j,T_i} \right ).
+$$
+
+A similar equation is used for the daily estimates of mean fish size. These relative and mean fish weights are calculated prior to fitting and are supplied to the stan fitting function.
+
+When fitting the weight data, we compare the predicted fish weight with the observed weight at the three sample times $T_1, T_2$ and $T_3$. After each comparison we set the predicted weight to the observed weight. Thus, each weight comparison assumes that the predicted weight matches the observed weight at the time of the prior sample. The random effects associated with the sampling, $\kappa_{j,t}$, are set to zero during fitting, as the expected intake during the sampling days is assumed to describe expected intake each day between sampling.
+
+Note that when applying this bioenergetic model it is common to assume $b_1 = 2/3$ and $b_2 = 1$ (or even less; $b_2 = 0.8$) (Essington et al., 2001). However, an objective of this analysis is to see if these standard assumptions are consistent with our intake and growth data.
+
+## Correlation between relative intake and relative cost
+
+The stan model `IntakeFit_Experimental_5.stan` estimates the correlation between the individual-level random effects associated with intake and costs (i.e., $\delta_{\text{I},j}$ and $\delta_{\text{C},j}$), assuming they are consistent with a bivariate-normal distribution. However, fitting this distribution is a little complicated. First, for each individual fish, standard normals are used to generated uncorrelated deviations for intake and costs, respectively. These paired random effects are then correlated by a linear transformation described by the matrix $L$, which is the product of two matrices: the diagonal of the the standard deviations $\sigma_\text{I}$ and $\sigma_\text{C}$, and the Cholesky decomposition matrix, which incorporates the correlation $\rho$:
+
+$$
+L = \begin{pmatrix} l_{11} & 0\\ l_{21} & l_{22} \end{pmatrix} = 
+    \begin{pmatrix} \sigma_\text{I} & 0\\ \rho \sigma_\text{C} & \sqrt{1 - \rho^2}\,\sigma_\text{C} \end{pmatrix} =
+    \begin{pmatrix} \sigma_\text{I} & 0\\ 0 & \sigma_\text{C} \end{pmatrix}
+    \begin{pmatrix} 1 & 0\\ \rho & \sqrt{1 - \rho^2} \end{pmatrix}.
+$$
+
+In the stan code the two-dimensional vector `sigma_u` stores the two standard deviations, and the matrix `L_u` is the Cholesky decomposition matrix.
+
+The covariance between the intake and cost random effect residuals is $$
+\text{Cov}(l_{11}Z_\text{I},l_{21}Z_\text{I}+l_{22}Z_\text{C}) = l_{11}l_{21} = \rho\sigma_\text{I}\sigma_\text{C}
+$$ where $Z_\text{I}$ and $Z_\text{C}$ are the random variables described by the uncorrelated standard normals for intake and costs, respectively.
+
+The random effects are derived from standard normals as follows: $$
+\delta_{\text{I},j} = l_{1,1}Z^\prime_\text{I}
+$$ and $$
+\delta_{\text{C},j} = l_{21}Z^\prime_\text{I}+l_{22}Z^\prime_\text{C}
+$$ where $Z^\prime_\text{I} = Z_\text{I}(1+\gamma_1 Z_\text{I})$, $Z^\prime_\text{C} = Z_\text{C}(1+\gamma_2 Z_\text{C})$ and $Z_\text{I}$ and $Z_\text{C}$ are both drawn from the standard normal distribution. The parameters $\gamma_1$ and $\gamma_2$, when non-zero, allow the random effects to be consistent with an assymetric bivariate normal distribution.
+
+## Asymmetric bi-variate normal random effect
+
+The data fitting suggests that fish that exhibit above-average intake and below-average costs have significantly greater growth curves than observed; however, some fish seem to have below-average intake and above-average costs. This apparent effect suggests that bi-variate normal, which is symmetric about its major axes is inadequate for describing between-individual intrinsic variate. One way to allow asymmetry is to transform the standard normals presented above.
+
+# Data
+
+The model parameters have been estimated by the code `GrowthFit_Predictions_5.Rmd`. Here we present the parameter estimates and the intake and growth predictions according to the fitted model.
+
+## Observations
+
+```{r}
+#| message: false
+#| warning: false
+
+library(tidyverse) # data frame functionality
+library(cowplot)   # create multi-plots
+library(mnormt)
+library(knitr)
+library(RColorBrewer)
+library(paletteer)
+
+rm(list = ls()) # clear memory
+
+# data used for fitting the model
+df_fit <- read_csv("fit_6_3.csv")
+df_fit$ID <- factor(df_fit$ID)
+df_fit$tank <- factor(df_fit$tank)
+glimpse(df_fit)
+
+#df_fit_gsi <- left_join(df_fit, df_indiv %>% select(ID, days, gonad_weight_g, GSI), by = c("ID", "days"))
+```
+
+## Posterior parameters
+
+```{r}
+# posterior parameter values
+
+# standard weight (a1 = intake, cov = a2)
+df_init <- df_fit |> filter(s == 1)
+w_std <- mean(df_init$w)
+
+df_posterior <- read_csv("posteriors_6_3.csv", show_col_types = FALSE)
+glimpse(df_posterior)
+```
+
+```{r}
+# posterior parameter values for individual random effects
+#   note: these are medians of the posterior estimates
+df_RE <- read_csv("REs_6_3.csv", show_col_types = FALSE)
+df_RE$j <- 1:nrow(df_RE)
+glimpse(df_RE)
+```
+
+```{r}
+df_sample_RE <- read_csv("sample_RE_6_3.csv", show_col_types = FALSE)
+m_sample_RE <- as.matrix(df_sample_RE)
+```
+
+```{r}
+# combine random effect terms to fitted data
+# df_fit_gsi <- df_fit_gsi |>
+#   left_join(df_RE, by = "j")
+
+df_fit <- df_fit |>
+  left_join(df_RE, by = "j")
+
+#glimpse(df_fit_gsi)
+```
+
+```{r}
+#| label: tbl-posterior
+#| tbl-cap: Posterior parameter estimates. 
+
+df_summary <- df_posterior %>%
+	pivot_longer(names_to = "Parameter", values_to = "Value", 1:ncol(df_posterior)) %>%
+	summarise(.by = "Parameter", 
+    mean   = round(mean(Value),4), 
+    sem    = round(sd(Value),4),
+    low90  = round(quantile(Value, probs = 0.05),4),
+    medn   = round(quantile(Value, probs = 0.50),4),
+    low90  = round(quantile(Value, probs = 0.05),4),
+    upp90  = round(quantile(Value, probs = 0.95),4))
+
+kable(df_summary)
+```
+
+# Observations
+
+## Intake (see supplementary material)
+
+```{r}
+#| label: fig-intake-obs
+#| fig-width: 6.5
+#| fig-asp: 0.8
+#| fig-cap: Observed food intake for fish in three tanks (columns) at four sampling days (rows). The black diagonal line runs through the point of mean weight and mean intake. Note the relatively low intake for fish in tanks 1 and 3 on sampling day 221. The random tank-by-sample variation evident in this figure is accounted for in the fitting using a random effect. 
+
+Ew <- mean(df_fit$w)
+Eintake <- mean(df_fit$intake)
+
+ggplot(df_fit) +
+  geom_abline(intercept = 0, slope = Eintake/Ew) +
+  geom_point(aes(x = w, y = intake, color = r)) +
+  facet_wrap( ~ tank, ncol = 1) +
+  labs(x = "Weight (g)", y = "Intake (g/ind.)", color = "Relative\nweight") +
+  scale_colour_gradient2(
+    low = "#CD0BBC",
+    mid = "wheat",
+    high = "green3",
+    midpoint = 0
+  ) +
+  facet_grid(factor(days) ~ tank) +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        axis.title = element_text(size = 14),  # Increase the size of axis titles
+        axis.text = element_text(size = 12)) # Increase the size of axis text labels
+
+log10_slope <- log10(Eintake)/log10(Ew)
+
+ggplot(df_fit) +
+  geom_point(aes(x = log10(w), y = log10(intake), color = r)) +
+	#geom_abline(slope = 1, intercept = 0, colour = "darkred") +
+  #geom_abline(intercept = 0, slope = Eintake/Ew, linetype = "dashed", color = "black") +
+	geom_abline(intercept = 0, slope = log10_slope, linetype = "dashed",
+						color = "black") +
+	geom_smooth(aes(x = log10(w), y = log10(intake)), method = "lm") +
+  labs(x = expression(log[10]*"(Wet weight (g))"),
+  		 y = expression(log[10]*"(Intake (g/ind.))"),
+  		 color = "Relative\nweight") +
+  scale_colour_gradient2(
+    low = "#CD0BBC",
+    mid = "wheat",
+    high = "green3",
+    midpoint = 0
+  ) +
+  facet_grid(factor(days)~.) +
+  theme_classic() +
+  theme(panel.grid = element_blank(),
+        axis.title = element_text(size = 14),  # Increase the size of axis titles
+        axis.text = element_text(size = 12))
+#ggsave("intake_data.pdf")
+```
+
+## Calculating the slope (log10(Intake) vs log10(wet weight))
+
+```{r}
+intake_lm_df <- df_fit |> 
+	mutate(day = factor(days),
+				 log_intake = log10(intake),
+				 log_weight = log10(w))
+
+intake_lm <- lm(log_intake ~ log_weight*day*r, data = intake_lm_df)
+summary(intake_lm)
+```
+
+## Table for the supplement
+
+```{r}
+# Load necessary libraries
+library(broom)
+library(gt)  # or use knitr::kable for simpler tables
+library(flextable)
+library(officer)
+
+# Tidy the model summary
+tidy_model <- tidy(intake_lm, conf.int = TRUE)
+
+# Format the table for publication
+reg_table <- tidy_model %>%
+  mutate(term = recode(term,
+                       "(Intercept)" = "Intercept",
+                       "log_weight" = "Log(Weight)",
+                       "day" = "Day",
+  										 "r" = "Relative weight",
+  										 "day173" = "Day 173",
+  										 "day221" = "Day 221",
+  										 "day274" = "Day 274",
+  										 "log_weight:day173" = "Log(Weight)*Day 173",
+  										 "log_weight:day221" = "Log(Weight)*Day 221",
+  										 "log_weight:day274" = "Log(Weight)*Day 274",
+  										 "log_weight:r" = "Log(Weight)*Relative weight",
+  										 "day173:r" = "Day 173*Relative Weight",
+  										 "day221:r" = "Day 221*Relative Weight",
+  										 "day274:r" = "Day 274*Relative Weight",
+  										 "log_weight:day173:r" = "Log(Weight)*Day 173*Relative weight",
+  										 "log_weight:day221:r" = "Log(Weight)*Day 221*Relative weight",
+  										 "log_weight:day274:r" = "Log(Weight)*Day 274*Relative weight",)) %>%
+  mutate(across(where(is.numeric), ~ round(., 3))) %>%
+  rename(
+    Term = term,
+    Estimate = estimate,
+    `Std. Error` = std.error,
+    `t-value` = statistic,
+    `CI Lower` = conf.low,
+    `CI Upper` = conf.high,
+    `p-value` = p.value
+  ) %>%
+	flextable() %>%
+	autofit()
+
+# Create a Word document and add the table
+doc <- read_docx() %>%
+	body_add_flextable(reg_table)
+
+# Save the Word document
+print(doc, target = "regression_summary.docx")
+
+
+```
+
+## Plotting the linear fit
+
+```{r}
+intake_lm_data <- tibble(
+  data = list(intake_lm_df),
+  model = list(intake_lm)
+)
+
+intake_lm_data <- intake_lm_data %>%
+  mutate(coef = map(model, tidy)) %>%
+  unnest(coef)
+
+pred_intake_lm <- intake_lm_data %>%
+  mutate(pred = map2(data, model, ~ augment(.y, newdata = .x))) %>%
+  unnest(pred)
+
+ggplot(pred_intake_lm, 
+       aes(log_weight, log_intake, colour = r)) +
+  geom_point() +
+  scale_colour_gradient2(
+    low = "#CD0BBC",
+    mid = "wheat",
+    high = "green3",
+    midpoint = 0
+  ) +
+	geom_abline(intercept = 0, slope = log10_slope, linetype = "dashed",
+						color = "black") +
+  geom_line(aes(y = .fitted), colour = "blue") +
+	labs(x = expression(log[10]*"(Wet weight (g))"),
+  		 y = expression(log[10]*"(Intake (g/ind.))"),
+  		 color = "Relative\nweight") +
+  facet_wrap(day~.) +
+  theme_classic()
+
+ggplot(pred_intake_lm, 
+       aes(log_weight, log_intake, colour = day)) +
+  geom_point(alpha = 0.25) +
+	geom_abline(intercept = 0, slope = log10_slope, linetype = "dashed",
+						color = "black") +
+  geom_line(aes(y = mean(.fitted), group = day, colour = day)) +
+	labs(x = expression(log[10]*"(Wet weight (g))"),
+  		 y = expression(log[10]*"(Intake (g/ind.))"),
+  		 color = "Relative\nweight") +
+  theme_classic() +
+	guides(alpha = "none")
+```
+
+```{r}
+ggplot(df_fit) +
+  geom_point(aes(x = log10(w), y = log10(intake), color = r), size = 2, alpha = 0.8) +
+  geom_abline(intercept = 0, slope = log10_slope, linetype = "dashed", 
+  						color = "black", linewidth = 0.6) +
+  geom_smooth(aes(x = log10(w), y = log10(intake)), method = "lm", color = "gray30", 
+  						se = FALSE, linewidth = 0.8) + 
+  labs(
+    x = expression(log[10]*"(Wet weight (g))"),
+    y = expression(log[10]*"(Intake (g/ind.))"),
+    color = "Relative\nweight"
+  ) +
+  scale_colour_gradient2(
+    low = "#CD0BBC",
+    mid = "wheat",
+    high = "green3",
+    midpoint = 0
+  ) +
+  facet_grid(factor(days) ~ .) +
+  theme_classic() +
+  theme(
+    panel.grid = element_blank(),
+    axis.line = element_line(color = "black", size = 0.5),
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    strip.text = element_text(size = 12),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 10),
+    plot.margin = margin(10, 10, 10, 10)
+  )
+```
+
+```{r}
+df_tmp <- df_fit %>% 
+  mutate(w_int = 200*round(w/200)) %>% 
+  dplyr::summarise(.by = c(s,tank,w_int), 
+    n = n(), 
+    mdn = median(intake)
+  ) |> 
+  filter(n >= 5)
+
+df_tmp_2 <- df_fit %>% 
+  dplyr::summarise(.by = c(s,tank), 
+    mdn_w = median(w),
+    mdn_i = median(intake)
+  )
+
+df_tmp_3 <- df_fit %>% 
+  dplyr::summarise(.by = c(s), 
+    mdn_w = median(w),
+    mdn_i = median(intake)
+  )
+
+df_tmp$s <- factor(df_tmp$s)
+df_tmp_2$s <- factor(df_tmp_2$s)
+
+mdn_w <- median(df_fit$w)
+mdn_i <- median(df_fit$intake)
+```
+
+```{r}
+#| label: fig-intake-summary
+#| fig-width: 6.5
+#| fig-asp: 0.6
+#| fig-cap: Median weight-dependent intake of fish for each tank and sampling time. Solid black line is the median intake across all three tanks. Dashed line runs through the median weight and intake.
+ggplot(df_tmp) + 
+	geom_abline(slope = mdn_i/mdn_w, intercept = 0.0, linetype = "dashed") +
+  geom_line(data = df_tmp_3, aes(x = mdn_w, y = mdn_i), linewidth = 1) + 
+  geom_point(aes(x = w_int, y = mdn, color = s), size = 0.75) + 
+  geom_line(aes(x = w_int, y = mdn, color = s, group = s)) + 
+	geom_point(data = df_tmp_2, aes(x = mdn_w, y = mdn_i, color = s), 
+		size = 2.5) +
+  facet_wrap( ~ tank) + 
+  ylim(0,NA) + xlim(0, NA) + 
+	labs(x = "Weight (g)", y = "Intake (g/ind.)") + 
+	theme_bw() +
+	theme(panel.grid = element_blank())
+```
+
+## Growth
+
+```{r}
+#| label: fig-growth-obs
+#| fig-width: 6.5
+#| fig-asp: 0.6
+#| fig-cap: Observed individual growth curves for fish in three tanks. Lines indicate weights from the same individual.
+
+p1 <- ggplot(df_fit) +
+  geom_line(aes(x = days, y = w, group = ID), color = "grey90") +
+  geom_point(aes(x = days, y = w, color = r)) +
+  facet_wrap( ~ tank) +
+  labs(y = "Weight (g)", x = "Day", color = "Relative\nweight") +
+  scale_colour_gradient2(
+    low = "#CD0BBC",
+    mid = "wheat",
+    high = "green3",
+    midpoint = 0
+  ) +
+	facet_wrap( ~ tank) +
+  theme_classic() +
+	theme(panel.grid = element_blank(),
+	      axis.title = element_text(size = 14),  # Increase the size of axis titles
+        axis.text = element_text(size = 11)) # Increase the size of axis text labels)
+
+p1
+```
+
+```{r}
+#| label: fig-pop-size
+#| fig-width: 5
+#| fig-asp: 0.6
+#| fig-cap: Number of fish in each tank at the four sampling times.
+
+df_pop_size <- df_fit |>
+	summarise(.by = c("days", "tank"),
+    fish = n())
+
+ggplot(df_pop_size) +
+  geom_line(aes(x = days, y = fish, color = tank, group = tank)) +
+  geom_point(aes(x = days, y = fish, color = tank)) +
+  labs(y = "Fish abundance", x = "Day", color = "Tank") +
+	ylim(0,NA) + 
+  theme_bw() +
+	theme(panel.grid = element_blank())
+```
+
+```{r}
+#| label: fig-REs
+#| fig-width: 6
+#| fig-asp: 0.75
+#| fig-cap: Estimated random effect terms for each fish associated with intake and costs. Estimates are shown for four days of sampling and color shows the relative size of fish at the sampling time. Fish associated with relatively higher costs tend to become relatively smaller over time.
+ 
+ggplot(df_fit) +
+  geom_point(aes(x = RE_I, y = RE_C, color = r)) +
+  labs(y = "RE (Cost)", x = "RE (Intake)", color = "Relative\nweight") +
+  geom_hline(yintercept = 0, color = "black", linetype = "dashed") +
+	geom_vline(xintercept = 0, color = "black", linetype = "dashed") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed") +
+  scale_colour_gradient2(
+    low = "#CD0BBC",
+    mid = "wheat",
+    high = "green3",
+    midpoint = 0
+  ) +
+	facet_wrap( ~ days) + 
+  theme_bw() +
+	theme(panel.grid = element_blank(),
+	      axis.title = element_text(size = 14),  # Increase the size of axis titles
+        axis.text = element_text(size = 12))
+
+# only showing the last time step with GSI info
+# ggplot(df_fit_gsi %>% filter(days == 274)) +
+#   geom_hline(yintercept = 0, color = "black", linetype = "dashed") +
+# 	geom_vline(xintercept = 0, color = "black", linetype = "dashed") +
+#   geom_point(aes(x = RE_I, y = RE_C, color = GSI)) +
+#   labs(y = "RE (Cost)", x = "RE (Intake)", color = "GSI") +
+#   scale_colour_gradient2(
+#     low = "blue",
+#     mid = "yellow",
+#     high = "red",
+#     midpoint = 0.09
+#   ) +
+#   #scale_colour_viridis_c(option = "plasma")+
+# 	#facet_wrap( ~ days) + 
+#   theme_bw() +
+# 	theme(panel.grid = element_blank())
+```
+
+```{r fig.width=4, fig.asp=1.25}
+# check random effect parameter estimates
+E_rho   <- median(df_posterior$rho)
+E_sig_I <- median(df_posterior$sig_I)
+E_sig_C <- median(df_posterior$sig_C)
+g1      <- median(df_posterior$g1)
+g2      <- median(df_posterior$g2)
+
+sig11 <- E_sig_I*E_sig_I
+sig22 <- E_sig_C*E_sig_C
+rho2  <- E_rho*E_rho
+sig12 <- E_rho*E_sig_I*E_sig_C
+	
+eval1 <- 0.5*(sig11 + sig22 + sqrt((sig11 + sig22)^2 -
+         4*sig11*sig22*(1-rho2)))
+bb <- (sig22 - sig11 + sqrt((sig11 + sig22)^2 - 4*sig11*sig22*(1-rho2))) /
+     (2*E_rho*E_sig_I*E_sig_C)
+eig_1 <- c(1/sqrt(1+bb^2), bb/sqrt(1+bb^2))
+
+eval2 <- 0.5*(sig11 + sig22 - sqrt((sig11 + sig22)^2 -
+         4*sig11*sig22*(1-rho2)))
+cc <- (sig22 - sig11 - sqrt((sig11 + sig22)^2 - 4*sig11*sig22*(1-rho2))) /
+     (2*E_rho*E_sig_I*E_sig_C)
+eig_2 <- c(1/sqrt(1+cc^2), cc/sqrt(1+cc^2))
+
+varcov <- matrix(data = c(E_sig_I^2, E_rho*E_sig_I*E_sig_C,
+  E_rho*E_sig_I*E_sig_C, E_sig_C^2), 
+  nrow = 2, ncol = 2)
+
+c2     <- qchisq(c(0.35, 0.7), 2)
+x1I <- sqrt(c2*sig11*sig22*(1-rho2) /   
+  (sig22-2*bb*E_rho*E_sig_I*E_sig_C+bb*bb*sig11))
+x2I <- bb*x1I
+
+x1C <- sqrt(c2*sig11*sig22*(1-rho2) /   
+  (sig22-2*cc*E_rho*E_sig_I*E_sig_C+cc*cc*sig11))
+x2C <- cc*x1C
+
+REPS <- 538
+
+Z1 <- rnorm(REPS)
+Z2 <- rnorm(REPS)
+
+df_RE_sim <- tibble(Z1, Z2) |>
+  mutate(
+  	Z1x = Z1*(1 + g1*Z1),
+  	Z2x = Z2*(1 + g2*Z2),
+    RE_I  = E_sig_I*Z1, 
+    RE_C  = E_rho*E_sig_C*Z1 + sqrt(1 - E_rho^2)*E_sig_C*Z2x)
+
+df_contour <- tibble(
+  RE_I = c(0.0, -0.075, -0.05, 0.0,   0.0, 0.05, 0.1,   0.25, 0.175), 
+	RE_C = c(0.0, -0.075,  0.05, 0.12, 0.29, 0.05, 0.12, 0.29, 0.2))
+```
+
+```{r}
+#| label: fig-RE-predictions
+#| fig-width: 6.5
+#| fig-asp: 0.65
+#| fig-cap: Observed (orange) and simulated (light blue) random effect terms. The nine dark blue circles depict thhe random effects used in the simulations below. Random effect values (A) and how they impact relative change in intake and costs (B).  
+
+p1 <- ggplot() +
+  geom_hline(yintercept = 0, color = "grey80") +
+  geom_vline(xintercept = 0, color = "grey80") +
+  geom_point(data = df_RE_sim, 
+    aes(x = RE_I, y = RE_C), color = "lightblue", size = 0.5) +
+  geom_point(data = df_RE, 
+    aes(x = RE_I, y = RE_C), color = "orange", size = 0.5) +
+  geom_point(data = df_contour, 
+    aes(x = RE_I, y = RE_C), color = "blue") +
+  labs(
+    y = "Random effect (cost)", x = "Random effect (intake)") +
+  theme_bw()
+
+p2 <- ggplot() +
+  geom_hline(yintercept = 1, color = "grey80") +
+  geom_vline(xintercept = 1, color = "grey80") +
+  geom_point(data = df_RE_sim, 
+    aes(x = exp(RE_I), y = exp(RE_C)), color = "lightblue", size = 0.5) +
+  geom_point(data = df_RE, 
+    aes(x = exp(RE_I), y = exp(RE_C)), color = "orange", size = 0.5) +
+  geom_point(data = df_contour, 
+    aes(x = exp(RE_I), y = exp(RE_C)), color = "blue") +
+	xlim(0, NA) + ylim(0, NA) + 
+  labs(y = "Relative cost", x = "Relative intake") +
+  theme_bw() +
+  theme(panel.grid = element_blank())
+
+plot_grid(p1, p2, labels = c("A", "B"))
+```
+
+```{r}
+#| label: fig-init
+#| fig-width: 6.5
+#| fig-asp: 0.7
+#| fig-cap: Relations between initial weight and estimated random effects associated with intake (A) and costs (B). Panel (C) shows only weak relation between these random effect and initial weight at the first time of sampling. Rows indicate the tank sampled. 
+
+df_initial <- df_fit |>
+  filter(s == 1) |>
+  dplyr::select(tank, RE_I, RE_C, w, r)
+
+p_wI <- ggplot(df_initial) +
+  geom_vline(xintercept = 0, color = "grey80") +
+  geom_point(aes(y = w, x = RE_I)) +
+  facet_wrap( ~ tank, ncol = 1) + 
+	labs(y = "Initial weight (g)", x = "Random effect (intake)") + 
+  theme_bw() +
+  theme(panel.grid = element_blank())
+
+p_wC <- ggplot(df_initial) +
+  geom_vline(xintercept = 0, color = "grey80") +
+  geom_point(aes(y = w, x = RE_C)) +
+  labs(y = "Initial weight (g)", x = "Random effect (cost)") + 
+  facet_wrap( ~ tank, ncol = 1) + 
+  theme_bw() +
+  theme(panel.grid = element_blank())
+
+p_IC <- ggplot(df_initial) +
+  geom_vline(xintercept = 0, color = "grey80") +
+  geom_hline(yintercept = 0, color = "grey80") +
+  geom_point(aes(x = RE_I, y = RE_C, color = r)) +
+  labs(x = "Random effect (intake)", y = "Random effect (cost)") + 
+  facet_wrap( ~ tank, ncol = 1) + 
+  scale_colour_gradient2(
+    low = "red",
+    mid = "wheat",
+    high = "green",
+    midpoint = 0
+  ) +
+  theme_bw() +
+  theme(panel.grid = element_blank(), legend.position="none")
+
+plot_grid(p_wI, p_wC, p_IC, ncol = 3, labels = c("A", "B", "C"))
+```
+
+```{r}
+#| label: fig-intake-net
+#| fig-width: 6.5
+#| fig-asp: 0.6
+#| fig-cap: (A) Observed (circles) and estimated mean intake (line). 95%CI is indicated by shaded region (purple). The estimated intake is for a fish of mean weight. Colors indicate the relative weight of the fish. A positive effect of relative weight on intake is shown by green points being under-estimated by the mean and red points being over-estimated by the mean. (B) The predicted daily intake (purple) and cost (red), and the resulting daily change in weight (blue). Predictions are for a fish of mean weight. Shaded regions depict 95%CIs.
+  
+# generate plots from above predictions
+p_Intake <- ggplot() +
+  geom_point(data = df_fit,
+    aes(x = w, y = intake, color = r)) +
+  geom_ribbon(data = df_predict,
+    aes(x = w, ymin = I_025, ymax = I_975), fill = "#FB9A99FF", alpha = 0.5) +
+  geom_line(data = df_predict,
+    aes(x = w, y = I_500), color = "darkred") +
+  labs(x = "Weight (g)", y = "Intake (g/ind./day)") +
+	scale_colour_gradient2(
+    low = "#CD0BBC",
+    mid = "wheat",
+    high = "green3",
+    midpoint = 0
+  ) +
+  theme_bw() +
+  #facet_grid(~tank) +
+  theme(
+  	panel.background = element_rect(fill = "white"),
+  #   legend.position = c(0.025, 0.975),
+  # 	legend.justification = c(0,1),
+  	panel.grid = element_blank()
+  ) +
+  guides(color = "none")
+
+p_NetGrowth <- ggplot() +
+  geom_hline(yintercept = 0.0, linetype = "dashed")  + 
+  geom_ribbon(data = df_predict,
+    aes(x = w, ymin = M_025, ymax = M_975), fill = "salmon") +
+  geom_line(data = df_predict,
+    aes(x = w, y = M_500), color = "darkred") +
+  geom_ribbon(data = df_predict,
+    aes(x = w, ymin = G_025, ymax = G_975), fill = "plum") +
+  geom_line(data = df_predict,
+    aes(x = w, y = G_500), color = "purple") +
+  geom_ribbon(data = df_predict,
+    aes(x = w, ymin = NG_025, ymax = NG_975), fill = "skyblue") +
+  geom_line(data = df_predict,
+    aes(x = w, y = NG_500), color = "blue") +
+  labs(x = "Weight (g)", y = "Weight gains or losses (g/ind./day)") +
+  theme_bw() +
+  theme(panel.grid = element_blank())
+
+# Plot with colour legends
+p_NetGrowth2 <- ggplot() +
+  geom_hline(yintercept = 0.0, linetype = "dashed")  + 
+  geom_ribbon(data = df_predict,
+              aes(x = w, ymin = M_025, ymax = M_975, fill = "Costs"), alpha = 0.9) +
+  geom_line(data = df_predict,
+            aes(x = w, y = M_500, color = "Costs")) +
+  geom_ribbon(data = df_predict,
+              aes(x = w, ymin = G_025, ymax = G_975, fill = "assim. Intake"), alpha = 0.9) +
+  geom_line(data = df_predict,
+            aes(x = w, y = G_500, color = "assim. Intake")) +
+  geom_ribbon(data = df_predict,
+              aes(x = w, ymin = NG_025, ymax = NG_975, fill = "Net gain"), alpha = 0.9) +
+  geom_line(data = df_predict,
+            aes(x = w, y = NG_500, color = "Net gain")) +
+  labs(x = "Weight (g)", y = "Weight gains or losses (g/ind./day)") +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        legend.position = "bottom") +
+  scale_fill_manual(values = c("Costs" = "salmon", 
+                               "assim. Intake" = "plum", 
+                               "Net gain" = "skyblue"),
+                    name = "") +
+  scale_color_manual(values = c("Costs" = "darkred", 
+                                "assim. Intake" = "purple", 
+                                "Net gain" = "darkblue")) +
+  guides(colour = "none")
+
+p_NetGrowth2
+
+plot_grid(p_Intake, p_NetGrowth, labels = c("A", "B"))
+```
+
+```{r}
+c10 <- df_posterior$c10
+c11 <- df_posterior$c11
+c20 <- df_posterior$c20
+c21 <- df_posterior$c21
+
+df_fit$days_F <- factor(df_fit$days)
+Ew <- (df_fit %>% summarise(.by = days_F, weight = mean(w)))$weight
+
+df_predict_r <- expand_grid(
+	Ew = Ew,
+	r = seq(from = min(df_fit$r), to = max(df_fit$r), length.out = 100)) %>%
+  mutate(	
+    I_rel_025 = 0.0, I_rel_500 = 0.0, I_rel_975 = 0.0,
+    C_rel_025 = 0.0, C_rel_500 = 0.0, C_rel_975 = 0.0)
+    
+for (i in 1:nrow(df_predict_r)) {
+  df_predict_r$I_rel_025[i] <- quantile(
+    exp((c10 + c11*df_predict_r$Ew[i])*df_predict_r$r[i]), probs = 0.025)
+  df_predict_r$I_rel_500[i] <- quantile(
+    exp((c10 + c11*df_predict_r$Ew[i])*df_predict_r$r[i]), probs = 0.500)
+  df_predict_r$I_rel_975[i] <- quantile(
+    exp((c10 + c11*df_predict_r$Ew[i])*df_predict_r$r[i]), probs = 0.975)
+  df_predict_r$C_rel_025[i] <- quantile(
+    exp((c20 + c21*df_predict_r$Ew[i])*df_predict_r$r[i]), probs = 0.025)
+  df_predict_r$C_rel_500[i] <- quantile(
+    exp((c20 + c21*df_predict_r$Ew[i])*df_predict_r$r[i]), probs = 0.500)
+  df_predict_r$C_rel_975[i] <- quantile(
+    exp((c20 + c21*df_predict_r$Ew[i])*df_predict_r$r[i]), probs = 0.975)
+}
+
+df_predict_r$Ew_F <- factor(round(df_predict_r$Ew,0))
+```
+
+```{r}
+#| label: fig-social
+#| fig-width: 6.5
+#| fig-asp: 0.4
+#| fig-cap: Estimated effect of a fish's relative weight on its intake and costs relative to others in its cohort. Estimates are provided for the mean weights of fish associated with the four sampling times. Shaded regions depict 95%CI.
+
+p_REs <- ggplot(df_predict_r) +
+  geom_hline(yintercept = 1.0, linetype = "dashed")  + 
+  geom_ribbon(aes(x = r, ymin = I_rel_025, ymax = I_rel_975), 
+    fill = "salmon") + 
+  geom_ribbon(aes(x = r, ymin = C_rel_025, ymax = C_rel_975), 
+    fill = "plum") + 
+  geom_line(aes(x = r, y = I_rel_500), color = "darkred") + 
+  geom_line(aes(x = r, y = C_rel_500), color = "purple") + 
+  xlim(-1,1) + ylim(0,NA) + 
+	facet_grid( ~ Ew_F) + 
+  labs(x = "Relative weight", y = "Relative intake or cost") +
+  theme_bw() +
+	theme(panel.grid = element_blank())
+
+# filtering for first and last feed intake sampling events
+p_REs2 <- ggplot(df_predict_r %>% filter(Ew_F == c(303, 878))) +
+  geom_hline(yintercept = 1.0, linetype = "dashed")  + 
+  geom_ribbon(aes(x = r, ymin = I_rel_025, ymax = I_rel_975), 
+              fill = "plum", alpha = 0.9) + 
+  geom_ribbon(aes(x = r, ymin = C_rel_025, ymax = C_rel_975),
+              fill = "salmon", alpha = 0.9) + 
+  geom_line(aes(x = r, y = I_rel_500), colour = "purple") + 
+  geom_line(aes(x = r, y = C_rel_500), colour = "darkred") + 
+  xlim(-1,1) + ylim(0,NA) + 
+	facet_grid( ~ Ew_F) + 
+  labs(x = "Relative weight, r", y = "Relative intake or cost") +
+  theme_bw() +
+	theme(panel.grid = element_blank()) +
+  guides(fill = "none", colour = "none") 
+
+p_REs
+
+plot_grid(p_NetGrowth2, p_REs2, labels = c("A", "B"))
+```
+
+```{r}
+# set up individual data frame
+df_indiv <- df_fit
+days_min <- min(df_indiv$days)
+days_max <- max(df_indiv$days)
+J        <- max(df_fit$j)
+S        <- max(df_fit$s)
+D        <- max(df_fit$d)
+Reps     <- nrow(df_posterior)
+
+sample_times <- (df_indiv %>%
+  dplyr::select(days) %>%
+  unique() %>%
+  arrange(days))$days # days when sampling occurs
+
+# collect individual traits
+df_ind_stats <- df_indiv %>%
+  group_by(j, l) %>%
+  summarise(.groups = "drop",
+    Obs = n(), # samples observed
+    d_min = min(days) - days_min + 1, # first day observed (relative)
+    d_max = max(days) - days_min + 1) # last day observed (relative)
+
+# make daily growth predictions
+v_w <- df_ind_stats$Obs               # number of observed weights per fish
+wP  <- array(data = NA, dim = c(J,S)) # store all weight predictions
+EwP <- array(data = NA, dim = c(J,D)) # expected weight predictions
+
+m_w  <- matrix(data = 0, nrow = J, ncol = S) # weight
+m_d  <- matrix(data = 0, nrow = J, ncol = S) # weight
+
+for (jj in 1:J) { # for each fish
+  ws <- (df_indiv %>% filter(j == jj))$w # weights of jj
+  ds <- (df_indiv %>% filter(j == jj))$d # sample days of jj
+  num_ws <- length(ws)  # weight samples of individual jj
+  if (!is.null(num_ws)) { # there are some weights
+  	for (kk in 1:num_ws) { # first, add known weights
+      m_d[jj,kk] <- ds[kk]
+      m_w[jj,kk] <- ws[kk]
+  	}
+  }
+}  
+
+# create linearly interpolated values
+m_r  <- matrix(data = NA, nrow = J, ncol = D) # relative weight
+m_mu <- matrix(data = NA, nrow = J, ncol = D) # mean weight
+
+for (i in 1:nrow(df_indiv)) { # for every observation
+  m_r[df_indiv$j[i], df_indiv$d[i]] <- df_indiv$r[i]	
+  m_mu[df_indiv$j[i], df_indiv$d[i]] <- df_indiv$w_bar[i]	
+}
+
+for (j in 1:J) {
+  ds <- which(!is.na(m_r[j,])) # times when r is provided
+  num_ds <- length(ds) 
+  if (!is.null(num_ds) & num_ds > 1) {
+  	for (i in 1:(num_ds - 1)) {
+  	  dd <- ds[i+1] - ds[i]
+  	  for (d in ds[i]:ds[i+1]) {
+        m_r[j,d]  <- m_r[j,ds[i]] + (d - ds[i])*(m_r[j,ds[i+1]] - m_r[j,ds[i]]) / dd
+        m_mu[j,d] <- m_mu[j,ds[i]] + (d - ds[i])*(m_mu[j,ds[i+1]] - m_mu[j,ds[i]]) / dd
+  	  }
+  	}
+  }
+  m_r[j,which(is.na(m_r[j, ]))] <- 0.0 # not alive then
+  m_mu[j,which(is.na(m_mu[j, ]))] <- 0.0 # not alive then
+}
+
+RE_I_j <- df_RE$RE_I
+RE_C_j <- df_RE$RE_C
+
+for (jj in 1:J) { # for each fish
+  w <- array(data = 0.0, dim = c(D, Reps)) # all posterior predictions for fish jj
+  if (v_w[jj] > 1) { # more than 1 weight so growth to predict
+    for (ss in 1:(v_w[jj] - 1)) { # for each growth interval
+      # predict weight change for individual jj from sample time ss -> ss+1
+      w[m_d[jj,ss], ] <- m_w[jj,ss] # reset predictions to observed weights
+      for (dd in (m_d[jj,ss]):(m_d[jj,ss+1]-1)) { # update weight each day
+        w[dd+1, ] <- w[dd, ] + 
+          eta*a1*exp((c10 + c11*m_mu[jj,dd])*m_r[jj,dd] + RE_I_j[jj])*((w[dd, ]/w_std)^b1) -
+              a2*exp((c20 + c21*m_mu[jj,dd])*m_r[jj,dd] + RE_C_j[jj])*((w[dd, ]/w_std)^b2) 
+      }
+      EwP[jj, ]   <- apply(w, 1, mean) # calculate mean weight for each day
+      wP[jj,ss+1] <- mean(w[dd+1, ])   # store mean of predicted weights for sample day
+    }
+  }
+}
+
+# calculate expected growth curves for each fish
+df_Ew <- as.data.frame(t(EwP))
+names(df_Ew) <- as.character(1:J)
+df_Ew$t <- days_min:days_max
+df_Ew <- pivot_longer(df_Ew, names_to = "j", values_to = "w", 1:J)
+df_Ew$j <- as.integer(df_Ew$j)
+df_Ew <- na.omit(df_Ew)
+
+# convert arrays of observations and predictions into data frames
+df_wP <- as.data.frame(wP)
+names(df_wP)  <- as.character(sample_times) # predictions
+df_wP$j <- 1:J
+df_wP   <- pivot_longer(df_wP, values_to = "p", names_to = "d", 1:4)
+df_wP$d <- as.integer(df_wP$d)
+
+df_mw <- as.data.frame(m_w)
+names(df_mw)  <- as.character(sample_times) # observations
+df_mw$j <- 1:J
+df_mw   <- pivot_longer(df_mw, values_to = "w", names_to = "d", 1:4)
+df_mw$d <- as.integer(df_mw$d)
+
+df_mw <- df_mw %>% 
+  left_join(df_wP, by = c("j", "d")) %>% 
+  filter(w > 0)
+
+# create a data frame with observed and predicted weights for plotting
+df_plot <- na.omit(df_mw) # remove observations without predictions
+df_plot <- df_plot %>% 
+	left_join(dplyr::select(df_fit, j, w, r), by = c("j","w"), 
+  relationship = "many-to-many")
+
+df_plot$d <- factor(df_plot$d)
+df_tank <- dplyr::select(df_fit, j, tank) %>% unique()
+
+df_plot <- left_join(df_plot, df_tank, by = "j")
+```
+
+```{r}
+# predict intake for all individuals
+df_I <- df_indiv %>%
+	dplyr::select(tank, s, days, w, w_bar, r, RE_I, k, intake) %>%
+	mutate(I_025 = 0.0, I_500 = 0.0, I_975 = 0.0) 
+
+a1  <- df_posterior$a1
+b1  <- df_posterior$b1
+c10 <- df_posterior$c10
+c11 <- df_posterior$c11
+
+sigma_RE <- df_posterior$sigma_RE
+
+for (i in 1:nrow(df_I)) {
+	Intakes <- a1 * exp(sigma_RE*m_sample_RE[ ,df_I$k[i]]) *
+    exp((c10 + c11*df_I$w_bar[i])*df_I$r[i] + df_I$RE_I[i]) *
+    ((df_I$w[i]/w_std)^b1)
+
+  df_I$I_025[i] <- quantile(Intakes, probs = 0.025)
+  df_I$I_500[i] <- quantile(Intakes, probs = 0.500)
+  df_I$I_975[i] <- quantile(Intakes, probs = 0.975)
+}
+```
+
+```{r}
+#| label: fig-intake-predict
+#| fig-width: 6.5
+#| fig-asp: 0.7
+#| fig-cap: Estimated and observed daily fish intake at four sample times (columns) for each tank (rows). Colour shows the relative weight of each fish in the tank.
+
+p_Intakes <- ggplot() +
+  geom_point(data = df_I, aes(x = I_500, y = intake, color = r)) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dotdash", color = "darkred") + 
+  labs(y = "Observed Intake (g/ind./day)", x = "Predicted Intake (g/ind./day)") + 
+  scale_colour_gradient2(
+    low = "#CD0BBC",
+    mid = "wheat",
+    high = "green3",
+    midpoint = 0
+  ) +
+	facet_grid(tank ~ days) + 
+  #facet_grid(~tank) +
+  theme_bw() +
+  # theme(
+  # 	panel.background = element_rect(fill = "white"),
+  #   legend.position="top",
+  #   panel.grid = element_line(colour = "grey95") 
+  # )
+  theme(
+  	panel.background = element_rect(fill = "white"),
+    legend.position = c(0.025, 0.975),
+  	legend.direction = "horizontal",
+  	legend.justification = c(0,1),
+  	panel.grid = element_blank(),
+  	panel.spacing.x = unit(0.5, "lines")
+  )
+
+p_Intakes
+```
+
+```{r}
+#| label: fig-weight-predict
+#| fig-width: 6.5
+#| fig-asp: 0.7
+#| fig-cap: Estimated and observed fish weights at three sample times (columns) for each tank (rows). Colour shows the relative weight of each fish in the tank.
+
+p_Weights <- ggplot() +
+  geom_point(data = df_plot, aes(y = w, x = p, color = r)) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "black") + 
+  labs(y = "Observed weight (g)", x = "Predicted weight (g)") + 
+	scale_colour_gradient2(
+    low = "red",
+    mid = "wheat",
+    high = "green",
+    midpoint = 0
+  ) +
+	facet_grid(tank ~ d) + 
+  theme_bw() +
+  # theme(
+  #   legend.position="top",
+  # 	panel.background = element_rect(fill = "white"),
+  #   panel.grid = element_line(colour = "grey95") 
+  # )
+  theme(
+  	panel.background = element_rect(fill = "white"),
+    legend.position = c(0.025, 0.975),
+  	legend.justification = c(0,1),
+  	panel.grid = element_blank()
+  )
+
+p_Weights
+```
+
+# Simulate growth
+
+## Observed versus predicted
+
+```{r}
+# simulate with the posterior means
+a1  <- mean(df_posterior$a1)
+b1  <- mean(df_posterior$b1)
+c10 <- mean(df_posterior$c10)
+c11 <- mean(df_posterior$c11)
+cv1 <- mean(df_posterior$cv1)
+a2  <- mean(df_posterior$a2)
+b2  <- mean(df_posterior$b2)
+c20 <- mean(df_posterior$c20)
+c21 <- mean(df_posterior$c21)
+cv2 <- mean(df_posterior$cv2)
+eta <- mean(df_posterior$eta)
+
+Tanks       <- 3
+Days_Total  <- max(df_fit$d) + 1
+# fish per tank
+Individuals <- (df_initial |> summarise(.by = tank, n = n()))$n
+maxIndividuals <- max(Individuals) # maximum fish in a tank
+w_max <- 1.5*max(df_fit$w) # maximum size for a fish
+
+m_w    <- array(data = NA, dim = c(Tanks,maxIndividuals,Days_Total))
+m_wbar <- array(data = NA, dim = c(Tanks,Days_Total))
+m_r    <- array(data = NA, dim = c(Tanks,maxIndividuals,Days_Total))
+m_RE_I <- array(data = NA, dim = c(Tanks,maxIndividuals))
+m_RE_C <- array(data = NA, dim = c(Tanks,maxIndividuals))
+m_j    <- array(data = NA, dim = c(Tanks,maxIndividuals))
+
+for (i in 1:Tanks) {
+	# identify fish indices
+	low <- ifelse(i == 1, 1, 1 + sum(Individuals[1:(i-1)]))
+  upp <- sum(Individuals[1:i])
+  js  <- (low:upp) - low + 1
+  m_w[i,js,1]  <- df_initial$w[low:upp]
+  m_r[i,js,1]  <- df_initial$r[low:upp]
+  m_RE_I[i,js] <- df_initial$RE_I[low:upp]
+  m_RE_C[i,js] <- df_initial$RE_C[low:upp]
+  m_j[i,js]    <- low:upp
+}
+
+for (i in 1:Tanks) {
+	for (d in 2:Days_Total) {
+	  m_wbar[i,d-1] <- mean(m_w[i,1:Individuals[i],d-1], na.rm = TRUE)
+	  for (j in 1:Individuals[i]) {
+	  	m_r[i,j,d-1] <- (m_w[i,j,d-1] - m_wbar[i,d-1]) / m_wbar[i,d-1]
+	  	
+	  	gain <- eta*a1*exp((c10 + c11*m_wbar[i,d-1])*m_r[i,j,d-1]) * 
+        ((m_w[i,j,d-1]/w_std)^b1) * exp(m_RE_I[i,j])
+	  	loss <- a2*exp((c20 + c21*m_wbar[i,d-1])*m_r[i,j,d-1]) * 
+        ((m_w[i,j,d-1]/w_std)^b2) * exp(m_RE_C[i,j])
+	  	
+	  	m_w[i,j,d] <- m_w[i,j,d-1] + gain - loss
+	  	# limit predicted size to maximum observed size
+	    m_w[i,j,d] <- min(m_w[i,j,d], w_max) 
+    }
+	}
+}
+
+df_max <- df_fit |>
+	summarise(.by = j, max_d = max(d, na.rm = TRUE))
+
+for (i in 1:Tanks) {
+	for (j in 1:maxIndividuals) {
+		if (!is.na(m_j[i,j])) {
+			max_d <- df_max$max_d[m_j[i,j]]
+			if (max_d < Days_Total) {
+  			m_w[i,j,(max_d+1):Days_Total] <- 0.0
+			}
+		}
+	}
+}
+
+df_w1 <- as.data.frame(m_w[1, ,]) %>% # tank 1
+	na.omit()
+names(df_w1) <- as.character(1:ncol(df_w1))
+df_w1 <- cbind(tibble(j = 1:nrow(df_w1), tank = 1), df_w1)
+df_w <- pivot_longer(df_w1, names_to = "d", values_to = "weight", 3:ncol(df_w1))
+
+df_w1 <- as.data.frame(m_w[2, ,]) %>% # tank 2 
+	na.omit()
+names(df_w1) <- as.character(1:ncol(df_w1))
+df_w1 <- cbind(tibble(j = 1:nrow(df_w1), tank = 2), df_w1)
+df_w <- rbind(df_w,
+  pivot_longer(df_w1, names_to = "d", values_to = "weight", 3:ncol(df_w1)))
+
+df_w1 <- as.data.frame(m_w[3, ,]) %>% # tank 3 
+	na.omit()
+names(df_w1) <- as.character(1:ncol(df_w1))
+df_w1 <- cbind(tibble(j = 1:nrow(df_w1), tank = 3), df_w1)
+df_w <- rbind(df_w,
+  pivot_longer(df_w1, names_to = "d", values_to = "weight", 3:ncol(df_w1)))
+
+df_w$d <- as.integer(df_w$d)
+df_w$tank <- factor(df_w$tank)
+
+df_w <- df_w |> filter(weight > 0)
+```
+
+```{r}
+#| label: fig-weight-obs-predicted
+#| fig-width: 6.5
+#| fig-asp: 0.8
+#| fig-cap: Observed growth (grey) and predicted growth (black). Predictions have been made for all fish. Note that an upper limit has been placed on predicted fish size. 
+ggplot() +
+	geom_line(data = df_w, aes(x = d, y = weight, group = j)) + 
+	geom_line(data = df_fit, aes(x = d, y = w, group = j), 
+    color = "salmon", alpha = 0.4) + 
+	geom_point(data = df_fit, aes(x = d, y = w), color = "salmon", size = 1) + 
+	facet_wrap( ~ tank) +
+	labs(x = "Day", y = "Weight (g)") +
+  theme_bw() +
+	theme(panel.grid = element_blank(), legend.position="none")
+
+
+p_Growth <- ggplot() +
+	geom_line(data = df_w, aes(x = d, y = weight, group = j)) + 
+	geom_line(data = df_fit, aes(x = d, y = w, group = j), 
+	          colour = "grey50", alpha = 0.4) + 
+	geom_point(data = df_fit, aes(x = d, y = w, color = r), size = 1) + 
+	scale_colour_gradient2(
+    low = "#CD0BBC",
+    mid = "wheat",
+    high = "green3",
+    midpoint = 0
+  ) +
+	facet_wrap( ~ tank) +
+	labs(x = "Day", y = "Weight (g)") +
+  theme_bw() +
+	theme(panel.grid = element_blank(), legend.position="none",
+	      panel.spacing.x = unit(0.5, "lines"))
+
+plot_grid(p_Intake, p_Intakes, p_Growth, nrow = 3, labels = c("A", "B", "C"))
+# A: growth + preds -> panels, 1st row
+# B: Intake data -> no panels, 2nd row
+# c: Intake fit -> no panels, 2nd row
+```
+
+```{r}
+#| label: fig-weight-intake-obs-predicted
+#| fig-width: 6.5
+#| fig-asp: 0.8
+#| fig-cap: Observed and predicted growth and feed intake of fish for three replicate tanks and four sampling times. Colour represents the size of the focal fish relative to all other fish in the same tank at the time of sampling. (A) Observed growth trajectories are shown as coloured points and greylines, growth predictions are depicted as black lines. (B) Observed intake at size indicates that fish of higher relative weight tend to ingest larger portion sizes. (C) Predictions of the intake model match observed individual intake as suggested by the tight fit around the 1:1 line (dark red dot-dashed line).  
+
+p_Growth <- ggplot() +
+	geom_line(data = df_w, aes(x = d, y = weight, group = j)) + 
+	geom_line(data = df_fit, aes(x = d, y = w, group = j), 
+	          colour = "grey50", alpha = 0.4) + 
+	geom_point(data = df_fit, aes(x = d, y = w, color = r), size = 1) + 
+	scale_colour_gradient2(
+    low = "#CD0BBC",
+    mid = "wheat",
+    high = "green3",
+    midpoint = 0
+  ) +
+	facet_wrap( ~ tank) +
+	labs(x = "Day", y = "Weight (g)") +
+  theme_bw() +
+	theme(panel.grid = element_blank(), 
+	      legend.position="none",
+	      panel.spacing.x = unit(0.5, "lines"),
+	      axis.title = element_text(size = 14),  
+        axis.text = element_text(size = 11))
+
+p_Intake2 <- ggplot() +
+  geom_point(data = df_fit,
+    aes(x = w, y = intake, color = r)) +
+  labs(x = "Weight (g)", y = "Intake (g/ind./day)") +
+	scale_colour_gradient2(
+    low = "#CD0BBC",
+    mid = "wheat",
+    high = "green3",
+    midpoint = 0
+  ) +
+  theme_bw() +
+  theme(
+  	panel.background = element_rect(fill = "white"),
+  #	  legend.position = "none",
+    legend.position = c(0.025, 0.975),
+  	legend.direction = "vertical",
+  	legend.justification = c(0,1),
+  	panel.grid = element_blank(),
+  	panel.spacing.x = unit(0.5, "lines"),
+    axis.title = element_text(size = 14),  # Increase the size of axis titles
+    axis.text = element_text(size = 12)
+  )
+
+p_Intakes <- ggplot() +
+  geom_point(data = df_I, aes(x = I_500, y = intake, color = r)) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dotdash", color = "darkred") + 
+  labs(y = "Observed Intake (g/ind./day)", x = "Predicted Intake (g/ind./day)") + 
+  scale_colour_gradient2(
+    low = "#CD0BBC",
+    mid = "wheat",
+    high = "green3",
+    midpoint = 0
+  ) +
+  theme_bw() +
+  # theme(
+  # 	panel.background = element_rect(fill = "white"),
+  #   legend.position="top",
+  #   panel.grid = element_line(colour = "grey95") 
+  # )
+  theme(
+  	panel.background = element_rect(fill = "white"),
+  #	  legend.position = "none",
+    legend.position = c(0.025, 0.975),
+  	legend.direction = "vertical",
+  	legend.justification = c(0,1),
+  	panel.grid = element_blank(),
+  	panel.spacing.x = unit(0.5, "lines"),
+    axis.title = element_text(size = 14),  # Increase the size of axis titles
+    axis.text = element_text(size = 12)
+  )
+
+bottom_row <- plot_grid(p_Intake2, p_Intakes, labels = c("B", "C"))
+top_row <- plot_grid(p_Intake2, p_Intakes, labels = c("A", "B"))
+
+plot_grid(p_Growth, bottom_row, nrow = 2, ncol = 1, labels = c("A", ""))
+plot_grid(top_row, p_Growth, nrow = 2, labels = c("", "C"))
+
+# preso figure
+plot_grid(p_Intakes, p_Growth, nrow = 2, labels = c("A", "B"))
+```
+
+## Without individual variation
+
+Random effects associated with individual are all set to zero. Model the growth of five individuals with weights given by the five quantiles: 0.05, 0.25, 0.5, 0.75 and 0.95, of a normal distribution with mean and standard deviation consistent with the first set of sampled fish weights. Consider two scenarios:
+
+1.  *without social interactions*: $c_{1,0} = c_{1,1} = c_{2,0} = c_{2,1} = 0$
+2.  *with social interactions*: above terms are provided by the fitted values
+
+```{r}
+w_sd_init <- sd(df_init$w)
+ws <- qnorm(p = c(0.05, 0.25, 0.5, 0.75, 0.95), 
+  mean = w_std, sd = w_sd_init)
+
+maxIndividuals <- length(ws)
+m_w    <- array(data = NA, dim = c(Days_Total, maxIndividuals))
+m_wbar <- array(data = NA, dim = c(Days_Total))
+m_r    <- array(data = NA, dim = c(Days_Total, maxIndividuals))
+
+m_w[1,] <- ws
+
+for (d in 2:Days_Total) {
+  m_wbar[d-1] <- mean(m_w[d-1, 1:maxIndividuals], na.rm = TRUE)
+  for (j in 1:maxIndividuals) {
+    m_r[d-1,j] <- (m_w[d-1,j] - m_wbar[d-1]) / m_wbar[d-1]
+    gain <- eta*a1*exp((c10 + c11*m_wbar[d-1])*m_r[d-1,j]) *
+    	((m_w[d-1,j]/w_std)^b1)
+    loss <- a2*exp((c20 + c21*m_wbar[d-1])*m_r[d-1,j]) * 
+    	((m_w[d-1,j]/w_std)^b2)
+    # loss <- min(gain, loss) # don't allow loss to be greater than gain
+    m_w[d,j] <- m_w[d-1,j] + gain - loss
+    m_w[d,j] <- min(m_w[d,j], w_max) # limit predicted size to maximum observed size
+  }
+}
+
+df_w1 <- as.data.frame(m_w)
+names(df_w1) <- as.character(1:ncol(df_w1))
+df_w1 <- cbind(tibble(social = TRUE, random = FALSE, day = 1:nrow(df_w1)), df_w1)
+df_wl <- pivot_longer(df_w1, names_to = "ID", values_to = "weight", 4:ncol(df_w1))
+
+for (d in 2:Days_Total) {
+  m_wbar[d-1] <- mean(m_w[d-1, 1:maxIndividuals], na.rm = TRUE)
+  for (j in 1:maxIndividuals) {
+    m_r[d-1,j] <- (m_w[d-1,j] - m_wbar[d-1]) / m_wbar[d-1]
+    gain <- eta*a1*((m_w[d-1,j]/w_std)^b1)
+    loss <- a2*((m_w[d-1,j]/w_std)^b2)
+    # loss <- min(gain, loss) # don't allow loss to be greater than gain
+    m_w[d,j] <- m_w[d-1,j] + gain - loss
+    m_w[d,j] <- min(m_w[d,j], w_max) # limit predicted size to maximum observed size
+  }
+}
+
+df_w1 <- as.data.frame(m_w)
+names(df_w1) <- as.character(1:ncol(df_w1))
+df_w1 <- cbind(tibble(social = FALSE, random = FALSE, day = 1:nrow(df_w1)), df_w1)
+df_wl <- rbind(df_wl, pivot_longer(df_w1, names_to = "ID", values_to = "weight", 4:ncol(df_w1)))
+```
+
+## With individual variation
+
+Random effects associated with individual are drawn form a fitted bivariate normal distribution. Model the growth of nine individuals with random effects given by the two quantile ellipses: 0.35 and 0.70, of a bivariate normal distribution. Nine intake-cost pairs are considered, consistent with the major and minor axis of the two associated ellipse contour curves (see above). Again, we consider two scenarios:
+
+1.  *without social interactions*: $c_{1,0} = c_{1,1} = c_{2,0} = c_{2,1} = 0$
+2.  *with social interactions*: above terms are provided by the fitted values
+
+```{r}
+df_contour$ID <- 1:nrow(df_contour)
+
+maxIndividuals <- nrow(df_contour)
+m_w    <- array(data = NA, dim = c(Days_Total, maxIndividuals))
+m_wbar <- array(data = NA, dim = c(Days_Total))
+m_r    <- array(data = NA, dim = c(Days_Total, maxIndividuals))
+
+m_w[1,] <- w_std
+
+for (d in 2:Days_Total) {
+  m_wbar[d-1] <- mean(m_w[d-1, 1:maxIndividuals], na.rm = TRUE)
+  for (j in 1:maxIndividuals) {
+    m_r[d-1,j] <- (m_w[d-1,j] - m_wbar[d-1]) / m_wbar[d-1]
+    gain <- eta*a1*exp((c10 + c11*m_wbar[d-1])*m_r[d-1,j]) *
+    	((m_w[d-1,j]/w_std)^b1)*exp(df_contour$RE_I[j])
+    loss <- a2*exp((c20 + c21*m_wbar[d-1])*m_r[d-1,j]) * 
+    	((m_w[d-1,j]/w_std)^b2)*exp(df_contour$RE_C[j])
+    # loss <- min(gain, loss) # don't allow loss to be greater than gain
+    m_w[d,j] <- m_w[d-1,j] + gain - loss
+    m_w[d,j] <- min(m_w[d,j], w_max) # limit predicted size to maximum observed size
+  }
+}
+
+df_w1 <- as.data.frame(m_w)
+names(df_w1) <- as.character(1:ncol(df_w1))
+df_w1 <- cbind(tibble(social = TRUE, random = TRUE, day = 1:nrow(df_w1)), 
+  df_w1)
+df_wl <- rbind(df_wl, 
+  pivot_longer(df_w1, names_to = "ID", values_to = "weight", 4:ncol(df_w1)))
+
+for (d in 2:Days_Total) {
+  m_wbar[d-1] <- mean(m_w[d-1, 1:maxIndividuals], na.rm = TRUE)
+  for (j in 1:maxIndividuals) {
+    m_r[d-1,j] <- (m_w[d-1,j] - m_wbar[d-1]) / m_wbar[d-1]
+    gain <- eta*a1*((m_w[d-1,j]/w_std)^b1)*exp(df_contour$RE_I[j])
+    loss <- a2*((m_w[d-1,j]/w_std)^b2)*exp(df_contour$RE_C[j])
+    # loss <- min(gain, loss) # don't allow loss to be greater than gain
+    m_w[d,j] <- m_w[d-1,j] + gain - loss
+    m_w[d,j] <- min(m_w[d,j], w_max) # limit predicted size to maximum observed size
+  }
+}
+
+df_w1 <- as.data.frame(m_w)
+names(df_w1) <- as.character(1:ncol(df_w1))
+df_w1 <- cbind(tibble(social = FALSE, random = TRUE, day = 1:nrow(df_w1)), df_w1)
+df_wl <- rbind(df_wl, pivot_longer(df_w1, names_to = "ID", values_to = "weight", 4:ncol(df_w1)))
+
+df_wl$ID <- factor(df_wl$ID)
+df_wl <- df_wl %>%
+	mutate(grp = paste(ID, social, random, sep = "_"))
+```
+
+## Plot predictions
+
+```{r}
+#| label: fig-predicted-without-variation
+#| fig-width: 6
+#| fig-asp: 0.6
+#| fig-cap: Predicted growth of a cohort of fish initially having differing weights. Predictions differ by whether the relative size of a fish has no impact on intake or costs (left panel) or a positive impact (right panel). All predictions assume that there is no intrinsic variation in intake and growth (i.e., all individual-level random deviations are set to zero).
+ 
+df_wl$social <- as.character(df_wl$social)
+df_wl$social <- factor(df_wl$social, levels = c("FALSE", "TRUE"))
+df_wl <- df_wl %>%
+  mutate(txt_social = recode(social, "FALSE" = "Without\ninteractions", 
+  "TRUE" = "With\ninteractions"))
+
+p1 <- ggplot(filter(df_wl, random == FALSE)) + 
+  geom_line(aes(x = day, y = weight, group = grp)) +
+  labs(x = "Day", y = "Weight (g)") +
+	facet_wrap(~ txt_social) +
+	ylim(0,NA) + 
+  theme_bw() +
+  theme(panel.grid = element_blank(), legend.position = "none",
+        axis.title = element_text(size = 14),  # Increase the size of axis titles
+        axis.text = element_text(size = 11))
+
+p1
+```
+
+```{r}
+#| label: fig-predicted-with-variation
+#| fig-width: 8.5
+#| fig-asp: 0.5
+#| fig-cap: Predicted growth of nine fish that exhibit intrinsic variation in their intake and costs (i.e., individual-level random deviations are non-zero). (A) The paired random deviations for all fish estimated during fitting (light grey circles) and the nine paired deviations considered when making predictions. (B) Predicted growth of a cohort of nine fish initially having the same weight. Predictions differ by whether the relative size of a fish has no impact on intake or costs (left panel) or a positive impact (right panel). Colors of the lines depict the individuals described by the corresponding paired random effects presented in panel A. 
+
+df_contour$ID <- factor(df_contour$ID)
+
+p2 <- ggplot() +
+	geom_hline(yintercept = 0, color = "black", linetype = "dashed") +
+	geom_vline(xintercept = 0, color = "black", linetype = "dashed") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotdash", color = "darkred") +
+  geom_point(data = df_RE, 
+    aes(x = RE_I, y = RE_C), color = "grey85", size = 3) +
+  geom_point(data = df_contour, 
+    aes(x = RE_I, y = RE_C, color = ID, size = 3)) +
+  labs(
+    y = "Random effect (cost)", x = "Random effect (intake)") +
+# 	scale_color_manual(values = c("black", "#41b6c4", "#225ea8", 
+#		"#8c96c6", "#88419d", "#78c679", "#238443", "#fd8d3c", "#e31a1c")) +
+	scale_color_manual(values = c("black", "#6A3D9AFF", "#b10026", 
+		"#FF7F00FF", "#FB9A99FF", "#1F78B4FF", "#A6CEE3FF", "#33A02CFF", "#B2DF8AFF")) +
+	guides(color = "none", size = "none") +
+  theme_bw() +
+	theme(panel.grid = element_blank(),
+	      axis.title = element_text(size = 14),  # Increase the size of axis titles
+        axis.text = element_text(size = 11))
+
+p3 <- ggplot(filter(df_wl, random == TRUE)) + 
+  geom_line(aes(x = day, y = weight, color = ID, group = grp), size = 1) +
+  labs(x = "Day", y = "Weight (g)") +
+	scale_color_manual(values = c("black", "#6A3D9AFF", "#b10026", 
+		"#FF7F00FF", "#FB9A99FF", "#1F78B4FF", "#A6CEE3FF", "#33A02CFF", "#B2DF8AFF")) +
+	facet_wrap( ~ txt_social) +
+	ylim(0,NA) + 
+  theme_bw() +
+  theme(panel.grid = element_blank(), legend.position = "none",
+        axis.title = element_text(size = 14),  # Increase the size of axis titles
+        axis.text = element_text(size = 11))
+
+plot_grid(p2, p3, rel_widths = c(1.2,2), labels = c("A", "B"))
+ggsave("variation_explained.pdf")
+```
+
+# Manuscript Figures and Tables
+
+```{r}
+#| label: fig-1-Observations
+#| fig-width: 6
+#| fig-asp: 0.6
+#| fig-cap: (A) Observed daily food intake of individual fish for all three tanks and four sampling times. (B) Observed patterns of individual fish growth. Lines depict weights from the same individual. For both panels color depicts the size of the fish relative to others in the same tank at the time of sampling.
+
+
+plot_Observed_Intake <- ggplot() + 
+  geom_point(data = df_fit, aes(x = w, y = intake, color = r)) +
+  labs(x = "Weight (g)", y = "Intake (g/ind./day)") +
+  scale_colour_gradient2(
+    low = "#CD0BBC",
+    mid = "wheat",
+    high = "green3",
+    midpoint = 0) +
+  theme_bw() +
+  facet_grid(factor(days) ~ .) +
+  theme(panel.background = element_rect(fill = "white"),
+        legend.position = c(0.975, 0.975),
+        legend.justification = c(1, 1),
+        panel.grid = element_blank())
+
+
+
+plot_Observed_Growth <- ggplot(df_fit) +
+  geom_line(aes(x = days, y = w, group = ID), color = "grey80") +
+  geom_point(aes(x = days, y = w, color = r)) +
+  labs(y = "Weight (g)", x = "Day", color = "Relative\nweight") +
+	ylim(0,1500) +
+  scale_colour_gradient2(
+    low = "#CD0BBC",
+    mid = "wheat",
+    high = "green3",
+    midpoint = 0
+  ) +
+  theme_bw() +
+	theme(panel.grid = element_blank(), legend.position = "none")
+
+plot_grid(plot_Observed_Intake, plot_Observed_Growth, labels = c("A", "B"))
+```
+
+```{r}
+# color palette hex codes
+paletteer_d("RColorBrewer::Paired", 12) 
+paletteer_d("RColorBrewer::Dark2", 8)
+```
+
+```{r}
+#| label: fig-2-Fit
+#| fig-width: 6
+#| fig-asp: 0.6
+#| fig-cap: (A) Estimated weight-dependent daily intake (green), daily cost (red), and resulting net change in weight (blue). Lines depict median predictions for an individual of average weight in its cohort (i.e., $r$ = 0), and shaded regions depict the associated 95% CI. (B) Estimated impact of size-dependent, among-individual interactions on intake (green) and costs (red). Predictions are presented when, on average, fish weight ($\bar{w}$) is 303g and 878 g, which describes the fish at the start and end of the study.
+
+plot_NetGrowth <- ggplot() +
+  geom_hline(yintercept = 0.0, linetype = "dashed")  + 
+  geom_ribbon(data = df_predict,
+    aes(x = w, ymin = M_025, ymax = M_975, fill = "Costs")) +
+  geom_line(data = df_predict,
+    aes(x = w, y = M_500, color = "Costs")) +
+  geom_ribbon(data = df_predict,
+    aes(x = w, ymin = G_025, ymax = G_975, fill = "assim. Intake")) +
+  geom_line(data = df_predict,
+    aes(x = w, y = G_500, color = "assim. Intake")) +
+  geom_ribbon(data = df_predict,
+    aes(x = w, ymin = NG_025, ymax = NG_975, fill = "Net gain")) +
+  geom_line(data = df_predict,
+    aes(x = w, y = NG_500, color = "Net gain")) +
+  theme_bw() +
+  theme(panel.grid = element_blank(),
+        legend.position = "bottom") +
+  scale_fill_manual(values = c("Costs" = "#CAB2D6FF", 
+                               "assim. Intake" = "#FB9A99FF", 
+                               "Net gain" = "#B2DF8AFF"),
+                    name = "") +
+  scale_color_manual(values = c("Costs" = "#6A3D9AFF", 
+                                "assim. Intake" = "#99000d", 
+                                "Net gain" = "#33A02CFF")) +
+  guides(colour = "none") +
+  labs(x = "Weight (g)", y = "Weight gains or losses (g/ind./day)") 
+
+levels(df_predict_r$Ew_F) <- list("303 g" = "303", "519 g" = "519",
+  "736 g" = "736", "878 g" = "878")
+	
+plot_r_effects <- ggplot(filter(df_predict_r, Ew_F %in% c("303 g", "878 g"))) +
+  geom_hline(yintercept = 1.0, linetype = "dashed")  + 
+  geom_ribbon(aes(x = r, ymin = C_rel_025, ymax = C_rel_975), 
+    fill = "#CAB2D6FF", alpha = 0.8) + 
+  geom_ribbon(aes(x = r, ymin = I_rel_025, ymax = I_rel_975), 
+    fill = "#FB9A99FF", alpha = 0.8) + 
+  geom_line(aes(x = r, y = C_rel_500), color = "#6A3D9AFF") + 
+  geom_line(aes(x = r, y = I_rel_500), color = "#99000d") + 
+	facet_grid( ~ Ew_F) + 
+  labs(x = "Relative weight, r", y = "Relative intake or cost") +
+  theme_bw() +
+	theme(panel.grid = element_blank())
+
+plot_grid(plot_NetGrowth, plot_r_effects, labels = c("A", "B"))
+```
+
+```{r}
+#| label: fig-3-predictions
+#| fig-width: 6
+#| fig-asp: 0.8
+#| fig-cap: (A) Estimated random effects describing intrinsic variation in intake (x-axis, $\delta_{\text{I},j}$) and growth costs (y-axis, $\delta_{\text{C},j}$) for the 182 fish included im the study (grey circles). Coloured circles coincide with the nine representative individuals used in the simulations. (B) Predicted fish growth when all fish are intrinsicaly identical (i.e., $\delta_{\text{I},j} = \delta_{\text{C},j} = 0$). Predictions are provided when intake and costs are not impacted by the relative size of a fish (Without interactions, $c_{1,0} = c_{1,1} = c_{2,0} = c_{2,1} = 0$), and when relative size has an effect (With interactions). (C) Predicted fish growth for a cohort of nine fish exhibiting the intinsic variation in intake and cost depected in (A), in the absence and presence of between-individual interactions.  
+
+plot_grid(p2, p1, NA, p3, rel_widths = c(1.2,2), labels = c("A", "B", NA, "C"))
+```
+
+# Credibility scores
+
+```{r}
+rel_we_c10 <- df_posterior |> 
+  select(c10) |> 
+  mutate(n0 = n(),
+         mean0 = mean(c10)) |> 
+  filter(c10 > 0) |> 
+  mutate(n1 = n()) |> 
+  mutate(cred = n1/n0)
+
+rel_we_c11 <- df_posterior |> 
+  select(c11) |> 
+  mutate(n0 = n(),
+         mean0 = mean(c11)) |> 
+  filter(c11 > 0) |> 
+  mutate(n1 = n()) |> 
+  mutate(cred = n1/n0)
+
+rel_we_c20 <- df_posterior |> 
+  select(c20) |> 
+  mutate(n0 = n(),
+         mean0 = mean(c20)) |> 
+  filter(c20 > 0) |> 
+  mutate(n1 = n()) |> 
+  mutate(cred = n1/n0)
+
+rel_we_c21 <- df_posterior |> 
+  select(c21) |> 
+  mutate(n0 = n(),
+         mean0 = mean(c21)) |> 
+  filter(c21 > 0) |> 
+  mutate(n1 = n()) |> 
+  mutate(cred = n1/n0)
+```
