@@ -643,6 +643,60 @@ plot_grid(p_wI, p_wC, p_IC, ncol = 3, labels = c("A", "B", "C"))
 ```
 
 ```{r}
+a1  <- df_posterior$a1
+b1  <- df_posterior$b1
+eta <- df_posterior$eta
+a2  <- df_posterior$a2
+b2  <- df_posterior$b2
+
+# set weights for predictions
+df_predict <- tibble(
+  w = seq(from = min(df_fit$w), to = max(df_fit$w), length.out = 100)
+) %>% # add intake and cv columns (include uncertainty bounds)
+  mutate(
+    I_025  = 0.0, I_500  = 0.0, I_975  = 0.0, # intake
+    G_025  = 0.0, G_500  = 0.0, G_975  = 0.0, # growth (daily)
+    M_025  = 0.0, M_500  = 0.0, M_975  = 0.0, # cost (daily)
+    NG_025 = 0.0, NG_500 = 0.0, NG_975 = 0.0  # net growth = growth - cost 
+  )
+
+# make predictions of intake and cv and calculate uncertainty (for typical fish; r = 0)
+for (i in 1:nrow(df_predict)) {
+    # intake 
+  df_predict$I_025[i] <- quantile(
+    a1*(df_predict$w[i]/w_std)^b1, probs = 0.025)
+  df_predict$I_500[i] <- quantile(
+    a1*(df_predict$w[i]/w_std)^b1, probs = 0.500)
+  df_predict$I_975[i] <- quantile(
+    a1*(df_predict$w[i]/w_std)^b1, probs = 0.975)
+  
+  # growth gain 
+  df_predict$G_025[i] <- quantile(
+    eta*a1*(df_predict$w[i]/w_std)^b1, probs = 0.025)
+  df_predict$G_500[i] <- quantile(
+    eta*a1*(df_predict$w[i]/w_std)^b1, probs = 0.500)
+  df_predict$G_975[i] <- quantile(
+    eta*a1*(df_predict$w[i]/w_std)^b1, probs = 0.975)
+
+  # growth cost 
+  df_predict$M_025[i] <- quantile(
+    a2*(df_predict$w[i]/w_std)^b2, probs = 0.025)
+  df_predict$M_500[i] <- quantile(
+    a2*(df_predict$w[i]/w_std)^b2, probs = 0.500)
+  df_predict$M_975[i] <- quantile(
+    a2*(df_predict$w[i]/w_std)^b2, probs = 0.975)
+  
+  # net daily gain
+  df_predict$NG_025[i] <- quantile(
+    eta*a1*(df_predict$w[i]/w_std)^b1 - a2*(df_predict$w[i]/w_std)^b2, probs = 0.025)
+  df_predict$NG_500[i] <- quantile(
+    eta*a1*(df_predict$w[i]/w_std)^b1 - a2*(df_predict$w[i]/w_std)^b2, probs = 0.500)
+  df_predict$NG_975[i] <- quantile(
+    eta*a1*(df_predict$w[i]/w_std)^b1 - a2*(df_predict$w[i]/w_std)^b2, probs = 0.975)
+}
+```
+
+```{r}
 #| label: fig-intake-net
 #| fig-width: 6.5
 #| fig-asp: 0.6
@@ -1503,7 +1557,9 @@ plot_NetGrowth <- ggplot() +
     aes(x = w, y = NG_500, color = "Net gain")) +
   theme_bw() +
   theme(panel.grid = element_blank(),
-        legend.position = "bottom") +
+        legend.position = "bottom",
+  			axis.title = element_text(size = 14),  # Increase the size of axis titles
+        axis.text = element_text(size = 12)) +
   scale_fill_manual(values = c("Costs" = "#CAB2D6FF", 
                                "assim. Intake" = "#FB9A99FF", 
                                "Net gain" = "#B2DF8AFF"),
@@ -1528,7 +1584,9 @@ plot_r_effects <- ggplot(filter(df_predict_r, Ew_F %in% c("303 g", "878 g"))) +
 	facet_grid( ~ Ew_F) + 
   labs(x = "Relative weight, r", y = "Relative intake or cost") +
   theme_bw() +
-	theme(panel.grid = element_blank())
+	theme(panel.grid = element_blank(),
+				axis.title = element_text(size = 14),  # Increase the size of axis titles
+        axis.text = element_text(size = 12))
 
 plot_grid(plot_NetGrowth, plot_r_effects, labels = c("A", "B"))
 ```
