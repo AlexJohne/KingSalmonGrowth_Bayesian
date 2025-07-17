@@ -1,6 +1,6 @@
 ---
 title: "Model Predictions (final)"
-author: "Shane A. Richards"
+author: "Shane A. Richards & Alexandra S. Johne"
 format:
   html:
     self-contained: true
@@ -89,7 +89,7 @@ The data fitting suggests that fish that exhibit above-average intake and below-
 
 # Data
 
-The model parameters have been estimated by the code `GrowthFit_Predictions_5.Rmd`. Here we present the parameter estimates and the intake and growth predictions according to the fitted model.
+The model parameters have been estimated by the code `GrowthFit_Predictions_.Rmd`. Here we present the parameter estimates and the intake and growth predictions according to the fitted model.
 
 ## Observations
 

@@ -1,124 +1,91 @@
 ---
-title: "Fit intake and growth data"
-author: "Shane A. Richards"
-date: "`r Sys.Date()`"
-output:
-  html_document:
-    code_folding: show
-    highlight: tango
-    theme: cerulean
-    toc: yes
-    toc_float: no
-  word_document:
-    toc: yes
-  pdf_document:
-    toc: yes
+title: "GrowthFit_Final"
+author: "Shane A. Richards & Alexandra S. Johne"
+format:
+  html:
+    self-contained: true
 editor: 
   navigate: false
-editor_options: 
-  markdown: 
-    wrap: 72
+toc: true
+code-overflow: wrap
 ---
-
-------------------------------------------------------------------------
 
 # Summary
 
-In this document we build on the intake model to incorporate costs to
-resolve fish growth. Fish intake depends on a fish's weight and its
-weight relative to others in the same tank.
-
--   This model differs from the one depicted in
-    `GrowthFit_Experimental_4.Rmd` in that it incorporates relative
-    weight as a predictor of costs nto growth.
-
-------------------------------------------------------------------------
+In this document we use model parameters previously calculated using Bayesian methods to predict fish intake and growth.
 
 # Model
 
 ## Intake and energetic costs
 
-Here, we assume energy density is constant, which means rates of change
-in fish weight can be expressed in terms of weight-dependent gains and
-losses. Let $w_{j,t}$ denote the weight of fish $j$ on day $t$, and
-$r_{j,t}$ be its relative weight compared with the average weight of
-others in the tank (\$). The expected intake rate of this individual on
-day $t$ is
+Here, we assume energy density is constant throughout the study, which means daily rates of change in fish weight can be expressed in terms of weight-dependent gains and losses. Let $w_{j,t}$ denote the weight of fish $j$ on day $t$, and $r_{j,t}$ be its relative weight compared with the average weight of others in the tank, $\bar{w}_{j,t}$ (i.e., $r_{j,t} = (w_{j,t} - \bar{w}_{j,t})/\bar{w}_{j,t}$). The expected intake rate of this individual on day $t$ is
 
 $$
-I_{j,t} = a_1 e^{(c_{1,0} + c_{1,1}\bar{w}) r_{j,t}} \bigg (\frac{w_{j,t}}{\hat{w}} \bigg )^{b_1} e^{\delta_j}.
+I_{j,t} = a_1 e^{(c_{1,0} + c_{1,1}\bar{w}_{j,t}) r_{j,t}} \bigg (\frac{w_{j,t}}{\hat{w}} \bigg )^{b_1} e^{\delta_{\text{I},j} + \kappa_{j,t}},
 $$
 
-Variation in intake is assumed to be consistent with a gamma
-distribution with constant coefficient of variation: $$
-\text{cv}_{j,t} = a_2 .
-$$\
-Note: $$
-\alpha = \text{cv}_{j,t}^{-2}
-$$ and $$
-\beta = \alpha/I_{j,t}
-$$.
+where $\delta_{\text{I},j}$ and $\kappa_{j,t}$ are random effects drawn from distinct normal distributions with mean zero, that describe between-individual and between-sample variation in intake, respectively. The parameters $c_{1,0}$ and $c_{1,1}$ describe potential social effects by allowing the relative weight of a fish to impact its intake, either positively or negatively. These terms also allow the strength of social interactions to change as fish grow.
 
-The daily gain in weight of this fish is $\varepsilon I_{j,t}$ and the
-daily cost in weight is
+Variation in observed intake around the expected value is assumed to be consistent with a gamma distribution with constant coefficient of variation (cv); $\text{cv}_\text{I}$. The parameters of the gamma distribution relate to the mean and the cv according to $\alpha = \text{cv}_\text{I}^{-2}$ and $\beta = \text{cv}_\text{I}/I_{j,t}$. Also, to help with fitting, we standardise weights according to the average initial weight, $\hat{w}$. Thus, $a_1$ is the expected intake of an average weight fish at the first time of sampling.
+
+We assuming the maximum daily weight gain is $\epsilon I_{j,t}$ and daily cost in weight is
 
 $$
-C_{j,t} = a_2 e^{(c_{2,0} + c_{2,1}\bar{w}) r_{j,t}} \bigg (\frac{w_{j,t}}{\hat{w}} \bigg )^{b_2} e^{\eta_j}
+C_{j,t} = a_2 e^{(c_{2,0} + c_{2,1}\bar{w}_{j,t}) r_{j,t}} \bigg (\frac{w_{j,t}}{\hat{w}} \bigg )^{b_2} e^{\delta_{\text{C},j}}.
 $$
 
-Here, $\delta_j$ and $\eta_j$ describe individual-specific deviations
-from the population median intake and cost, respectively, and we assume
-they come from a bivariate normal distribution with correlation $\rho$.
-The parameter $c_2$ allows relative weight to impact the cost, either
-positively or negatively.
+The parameters $c_{2,0}$ and $c_{2,1}$ allow investigation of social interactions on cost based on relative weights.
 
-Thus, the expected daily change in weight is
+The parameter $\delta_{\text{C},j}$ describes between-individual variation in cost. Thus, each individual is associated with two random effect terms: $\delta_{\text{I},j}$ and $\delta_{\text{C},j}$. We assume these two terms may be correlated and come from a bivariate normal distribution with standard deviations: $\sigma_\text{I}$ and $\sigma_\text{C}$, and correlation $\rho$. Here, we are interested in whether individuals tend to exhibit a trade-off between high intake and low cost.
 
-$$
+The expected daily change in weight is: $$
 w_{j,t+1} = w_{j,t} + \varepsilon I_{j,t}(w_{j,t},r_{j,t}) - C_{j,t}(w_{j,t}).
 $$
 
-Weights are provided at four times: $t = \{T_0, T_1, T_2, T_3 \}$. To
-implement the growth model requires daily estimates of relative size and
-mean weights, which can both be estimated using linear regression:
+Similar to intake, variation in observed weights about this expectation is consistent with a gamma distribution, but with constant coefficient of variation, $\text{cv}_\text{W}$.
+
+Weights are provided at four times: $t = \{T_0, T_1, T_2, T_3 \}$. However, in order to implement the growth model, we require daily estimates of relative size, and mean size. These daily values can be predicted from the observed values using linear regression. For the daily relative weights we use:
 
 $$
-r_{j,t} = r_{j,T_i} + \frac{t - T_i}{T_{i+1} - T_i} \left ( r_{j,T_{i+1}} - r_{j,T_i} \right ),
+r_{j,t} = r_{j,T_i} + \frac{t - T_i}{T_{i+1} - T_i} \left ( r_{j,T_{i+1}} - r_{j,T_i} \right ).
 $$
 
-$$
-\bar{w}_{j,t} = \bar{w}_{j,T_i} + \frac{t - T_i}{T_{i+1} - T_i} \left ( \bar{w}_{j,T_{i+1}} - \bar{w}_{j,T_i} \right ),
-$$
+A similar equation is used for the daily estimates of mean fish size. These relative and mean fish weights are calculated prior to fitting and are supplied to the stan fitting function.
 
-These mean weights and relative weights are calculated prior to fitting
-and supplied to the stan fitting function.
+When fitting the weight data, we compare the predicted fish weight with the observed weight at the three sample times $T_1, T_2$ and $T_3$. After each comparison we set the predicted weight to the observed weight. Thus, each weight comparison assumes that the predicted weight matches the observed weight at the time of the prior sample. The random effects associated with the sampling, $\kappa_{j,t}$, are set to zero during fitting, as the expected intake during the sampling days is assumed to describe expected intake each day between sampling.
 
-Note that when applying this bio-energetic model it is common to assume
-$b_1 = 2/3$ and $b_2 = 1$ (or even less; $b_2 = 0.8$) (Essington et al.,
-2001). An objective of this analysis is to see if these assumptions are
-consistent with our intake and growth data.
+Note that when applying this bioenergetic model it is common to assume $b_1 = 2/3$ and $b_2 = 1$ (or even less; $b_2 = 0.8$) (Essington et al., 2001). However, an objective of this analysis is to see if these standard assumptions are consistent with our intake and growth data.
 
 ## Correlation between relative intake and relative cost
 
-The stan model `IntakeFit_Experimental_2.stan` estimates the correlation
-between the individual-level random effects associated with intake and
-costs, but fitting this correlation is a little complicated. First, for
-each individual fish, uncorrelated standard normals are generated for
-intake and costs, respectively. These paired random effects are then
-correlated by a linear transformation. The stan code
-`diag_pre_multiply(sigma_u, L_u)` fits a lower diagonal matrix: $$
-L = \begin{pmatrix} a & 0\\ b & c \end{pmatrix}
-$$ where $a^2$ is the variance of the residuals associated with intake.
-The covariance between the intake and cost residuals is $$
-\text{Cov}(aZ_\text{I},bZ_\text{I}+cZ_\text{C}) = ab
-$$ where $Z_\text{I}$ and $Z_\text{C}$ are the uncorrelated standard
-normals for intake and costs, respectively. The variance of the
-residuals associated with costs is $(b^2 + c^2)$. The correlation
-between the two random effects $X_\text{I} = aZ_\text{I}$ and
-$X_\text{C} = bZ_\text{I} + cZ_\text{C}$ is $$
-\rho = \frac{\text{Cov}(X_\text{I},X_\text{C})} {\sqrt{ \text{Var}(X_\text{I}) \text{Var}(X_\text{C}) }} = \frac{ab}{\sqrt{a^2(b^2+c^2)}}
-$$ This last equation is implemented in `generated quantities` to
-estimate $\rho$.
+The stan model `IntakeFit_Experimental_5.stan` estimates the correlation between the individual-level random effects associated with intake and costs (i.e., $\delta_{\text{I},j}$ and $\delta_{\text{C},j}$), assuming they are consistent with a bivariate-normal distribution. However, fitting this distribution is a little complicated. First, for each individual fish, standard normals are used to generated uncorrelated deviations for intake and costs, respectively. These paired random effects are then correlated by a linear transformation described by the matrix $L$, which is the product of two matrices: the diagonal of the the standard deviations $\sigma_\text{I}$ and $\sigma_\text{C}$, and the Cholesky decomposition matrix, which incorporates the correlation $\rho$:
+
+$$
+L = \begin{pmatrix} l_{11} & 0\\ l_{21} & l_{22} \end{pmatrix} = 
+    \begin{pmatrix} \sigma_\text{I} & 0\\ \rho \sigma_\text{C} & \sqrt{1 - \rho^2}\,\sigma_\text{C} \end{pmatrix} =
+    \begin{pmatrix} \sigma_\text{I} & 0\\ 0 & \sigma_\text{C} \end{pmatrix}
+    \begin{pmatrix} 1 & 0\\ \rho & \sqrt{1 - \rho^2} \end{pmatrix}.
+$$
+
+In the stan code the two-dimensional vector `sigma_u` stores the two standard deviations, and the matrix `L_u` is the Cholesky decomposition matrix.
+
+The covariance between the intake and cost random effect residuals is $$
+\text{Cov}(l_{11}Z_\text{I},l_{21}Z_\text{I}+l_{22}Z_\text{C}) = l_{11}l_{21} = \rho\sigma_\text{I}\sigma_\text{C}
+$$ where $Z_\text{I}$ and $Z_\text{C}$ are the random variables described by the uncorrelated standard normals for intake and costs, respectively.
+
+The random effects are derived from standard normals as follows: $$
+\delta_{\text{I},j} = l_{1,1}Z^\prime_\text{I}
+$$ and $$
+\delta_{\text{C},j} = l_{21}Z^\prime_\text{I}+l_{22}Z^\prime_\text{C}
+$$ where $Z^\prime_\text{I} = Z_\text{I}(1+\gamma_1 Z_\text{I})$, $Z^\prime_\text{C} = Z_\text{C}(1+\gamma_2 Z_\text{C})$ and $Z_\text{I}$ and $Z_\text{C}$ are both drawn from the standard normal distribution. The parameters $\gamma_1$ and $\gamma_2$, when non-zero, allow the random effects to be consistent with an assymetric bivariate normal distribution.
+
+## Asymmetric bi-variate normal random effect
+
+The data fitting suggests that fish that exhibit above-average intake and below-average costs have significantly greater growth curves than observed; however, some fish seem to have below-average intake and above-average costs. This apparent effect suggests that bi-variate normal, which is symmetric about its major axes is inadequate for describing between-individual intrinsic variate. One way to allow asymmetry is to transform the standard normals presented above.
+
+# Data
+
+The model parameters have been estimated by the code `GrowthFit_Predictions_.Rmd`. Here we present the parameter estimates and the intake and growth predictions according to the fitted model.
 
 ```{r message=FALSE, warning=FALSE}
 library(tidyverse) # data frame functionality
@@ -132,7 +99,7 @@ rm(list = ls()) # clear memory
 # individual feed consumption data
 df_indiv <- read_csv("100S_fish_growth.csv")  %>%
   dplyr::select(c(2,3,4,5,7)) # ID, tank, days, weight, intake
-#df_indiv_gsi <- readRDS("df_indiv_GSI.rds")
+
 
 # set up individual data frame
 df_indiv <- df_indiv %>% 
@@ -159,8 +126,7 @@ df_indiv <- df_indiv %>%
 glimpse(df_indiv)
 ```
 
-There are `r nrow(df_indiv)` observations spanning
-`r length(levels(df_indiv$ID))` individuals.
+There are `r nrow(df_indiv)` observations spanning `r length(levels(df_indiv$ID))` individuals.
 
 ```{r}
 p1 <- ggplot(df_indiv) +
@@ -632,15 +598,7 @@ for (i in 1:nrow(df_predict)) {
     eta*a1*(df_predict$w[i]/w_std)^b1 - a2*(df_predict$w[i]/w_std)^b2, probs = 0.500)
   df_predict$NG_975[i] <- quantile(
     eta*a1*(df_predict$w[i]/w_std)^b1 - a2*(df_predict$w[i]/w_std)^b2, probs = 0.975)
-  
-#     # net daily gain (no eta)
-#   df_predict$NG_025[i] <- quantile(
-#     a1*(df_predict$w[i]/w_std)^b1 - a2*(df_predict$w[i]/w_std)^b2, probs = 0.025)
-#   df_predict$NG_500[i] <- quantile(
-#     a1*(df_predict$w[i]/w_std)^b1 - a2*(df_predict$w[i]/w_std)^b2, probs = 0.500)
-#   df_predict$NG_975[i] <- quantile(
-#     a1*(df_predict$w[i]/w_std)^b1 - a2*(df_predict$w[i]/w_std)^b2, probs = 0.975)
-}
+
 
 # generate plots from above predictions
 p_Intake <- ggplot() +
@@ -705,22 +663,6 @@ for (jj in 1:J) { # for each fish
   }
 }
 
-# for (jj in 1:J) { # for each fish (no eta --> absorbed by a1??)
-#   w <- array(data = 0.0, dim = c(D, Reps)) # all posterior predictions for fish jj
-#   if (v_w[jj] > 1) { # more than 1 weight so growth to predict
-#     for (ss in 1:(v_w[jj] - 1)) { # for each growth interval
-#       # predict weight change for individual jj from sample time ss -> ss+1
-#       w[m_d[jj,ss], ] <- m_w[jj,ss] # reset predictions to observed weights
-#       for (dd in (m_d[jj,ss]):(m_d[jj,ss+1]-1)) { # update weight each day
-#         w[dd+1, ] <- w[dd, ] + 
-#           a1*exp((c10 + c11*m_mu[jj,dd])*m_r[jj,dd] + RE_I_j[ ,jj])*((w[dd, ]/w_std)^b1) -
-#               a2*exp((c20 + c21*m_mu[jj,dd])*m_r[jj,dd] + RE_C_j[ ,jj])*((w[dd, ]/w_std)^b2) 
-#       }
-#       EwP[jj, ]   <- apply(w, 1, mean) # calculate mean weight for each day
-#       wP[jj,ss+1] <- mean(w[dd+1, ])   # store mean of predicted weights for sample day
-#     }
-#   }
-# }
 
 # calculate expected growth curves for each fish
 df_Ew <- as.data.frame(t(EwP))
@@ -987,5 +929,5 @@ write_csv(df_sample_RE, "sample_RE_6_3.csv")
 # Supplementary Information
 
 ```{r comment=''}
-cat(readLines('IntakeFit_Experimental_6_2.stan'), sep = '\n')
+cat(readLines('IntakeFit_Experimental_6_3.stan'), sep = '\n')
 ```
